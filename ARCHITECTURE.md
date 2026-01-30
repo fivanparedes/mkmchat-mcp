@@ -1,250 +1,152 @@
 # System Architecture
 
-Visual overview of the mkmchat system architecture.
-
 ## High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         MCP Client                               │
-│                   (Claude Desktop, VS Code, etc.)                │
+│                         MCP Clients                              │
+│                (Claude Desktop, VS Code, Custom Apps)            │
 └────────────────────────────┬────────────────────────────────────┘
                              │ MCP Protocol
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      MCP Server (server.py)                      │
-│                                                                   │
-│  ┌───────────────────┐  ┌───────────────────┐  ┌─────────────┐ │
-│  │   Base Tools (3)  │  │  Search Tools (3) │  │ LLM Tools(4)│ │
-│  │                   │  │                   │  │  (Ollama)   │ │
-│  │ • character_info  │  │ • semantic_search │  │ • ask_ollama│ │
-│  │ • equipment_info  │  │ • search_chars_   │  │ • compare_  │ │
-│  │ • suggest_team    │  │   advanced        │  │   ollama    │ │
-│  │                   │  │ • search_equip_   │  │ • suggest_  │ │
-│  │                   │  │   advanced        │  │   ollama    │ │
-│  │                   │  │                   │  │ • explain_  │ │
-│  │                   │  │                   │  │   ollama    │ │
-│  └─────────┬─────────┘  └─────────┬─────────┘  └──────┬──────┘ │
+│                                                                  │
+│  ┌───────────────────┐  ┌───────────────────┐  ┌─────────────┐  │
+│  │  Data Tools (3)   │  │ Search Tools (3)  │  │ LLM Tools(4)│  │
+│  │                   │  │                   │  │  (Ollama)   │  │
+│  │ • character_info  │  │ • semantic_search │  │ • ask       │  │
+│  │ • equipment_info  │  │ • search_chars_   │  │ • compare   │  │
+│  │ • suggest_team    │  │   advanced        │  │ • suggest   │  │
+│  │                   │  │ • search_equip_   │  │ • explain   │  │
+│  │                   │  │   advanced        │  │             │  │
+│  └─────────┬─────────┘  └─────────┬─────────┘  └──────┬──────┘  │
 └────────────┼────────────────────────┼────────────────────┼───────┘
              │                        │                    │
              ▼                        ▼                    ▼
 ┌────────────────────┐   ┌────────────────────┐   ┌──────────────┐
 │   Data Loader      │   │    RAG System      │   │   Ollama     │
 │   (loader.py)      │   │    (rag.py)        │   │  Assistant   │
-│                    │   │                    │   │  (ollama.py) │
-│ • Load TSV files   │   │ • Embeddings       │   │              │
-│ • Parse characters │   │ • Semantic search  │   │ • LLM queries│
-│ • Parse equipment  │   │ • Cache system     │   │ • RAG context│
-│ • Validate data    │   │ • Doc indexing     │   │ • Local AI   │
-└─────────┬──────────┘   └──────────┬─────────┘   └───────┬──────┘
-          │                         │                      │
-          │                         │         ┌────────────┘
-          │                         │         │
-          ▼                         ▼         ▼
-┌─────────────────────────────────────────────────────────┐
-│                      Data Layer                          │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ characters   │  │ abilities    │  │ passives     │  │
-│  │ .tsv         │  │ .tsv         │  │ .tsv         │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ equipment    │  │ gameplay.txt │  │ glossary.txt │  │
-│  │ _*.tsv       │  │              │  │              │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │           .rag_cache/ (embeddings)               │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+│                    │   │                    │   │              │
+│ • Load TSV files   │   │ • Embeddings       │   │ • LLM queries│
+│ • Fuzzy matching   │   │ • Semantic search  │   │ • RAG context│
+│ • Parse data       │   │ • Cache system     │   │ • Local AI   │
+└─────────┬──────────┘   └──────────┬─────────┘   └──────────────┘
+          │                         │
+          ▼                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         Data Layer                               │
+│                                                                  │
+│  characters.tsv │ abilities.tsv │ passives.tsv │ equipment*.tsv │
+│  glossary.txt   │ gameplay.txt  │ .rag_cache/  (embeddings)     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## HTTP API Server
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       HTTP Clients                               │
+│               (Web Apps, Mobile Apps, CLI tools)                 │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ HTTP POST /suggest-team
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   HTTP Server (http_server.py)                   │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                  /suggest-team endpoint                    │  │
+│  │                                                            │  │
+│  │  1. Parse JSON request (strategy, owned_characters)       │  │
+│  │  2. Build structured context from RAG                     │  │
+│  │  3. Send prompt to Ollama with low temperature (0.1)      │  │
+│  │  4. Parse and return JSON response                        │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+   ┌────────────┐    ┌────────────┐    ┌──────────────┐
+   │ RAG System │    │   Ollama   │    │ JSON Response│
+   │            │    │ (LLM API)  │    │              │
+   │ Characters │    │            │    │ char1/2/3   │
+   │ Equipment  │    │ llama3.2:3b│    │ equipment[] │
+   │ by type    │    │            │    │ strategy    │
+   └────────────┘    └────────────┘    └──────────────┘
 ```
 
 ## Data Flow
 
-### 1. Simple Query (Base Tools)
+### MCP Query Flow
 ```
-User Query
-    │
-    ▼
-MCP Client → MCP Server → Base Tool → Data Loader → TSV Files
-                                              │
-                                              ▼
-                                        Parse & Return
-                                              │
-                                              ▼
-                  Response ← Tool ← Data Loader
-```
-
-### 2. Semantic Search (Search Tools)
-```
-User Query ("find fire characters")
-    │
-    ▼
-MCP Client → MCP Server → Search Tool
-                              │
-                              ▼
-                         RAG System
-                              │
-                    ┌─────────┴─────────┐
-                    ▼                   ▼
-            Check Cache          Embeddings
-                    │                   │
-            ┌───────┴───────┐          │
-            │ Cache Hit?    │          │
-            └───┬───────┬───┘          │
-                │Yes    │No            │
-                │       └──────────────┘
-                │              │
-                ▼              ▼
-         Load Cache    Generate Embeddings
-                │              │
-                └──────┬───────┘
-                       ▼
-                Semantic Search (Cosine Similarity)
-                       │
-                       ▼
-                 Top K Results (e.g., k=5)
-                       │
-                       ▼
-                 Format Response
-                       │
-                       ▼
-            Response ← Search Tool
+User Query → MCP Client → MCP Server → Tool Handler
+                                           │
+              ┌────────────────────────────┼────────────────────────────┐
+              ▼                            ▼                            ▼
+         Data Loader                  RAG System                   Ollama LLM
+         (direct lookup)              (semantic search)            (AI response)
+              │                            │                            │
+              └────────────────────────────┼────────────────────────────┘
+                                           ▼
+                                    Response to Client
 ```
 
-### 3. AI Query (LLM Tools)
+### HTTP API Flow
 ```
-User Query ("What's best counter to freeze?")
+HTTP POST /suggest-team
     │
     ▼
-MCP Client → MCP Server → LLM Tool
-                              │
-                              ▼
-                      Ollama Assistant
-                              │
-                    ┌─────────┴─────────┐
-                    ▼                   ▼
-              RAG Context         System Prompt
-                    │                   │
-                    ▼                   │
-            Search for relevant         │
-            characters/mechanics        │
-                    │                   │
-                    └─────────┬─────────┘
-                              ▼
-                    Ollama API (llama3.2:3b)
-                              │
-                              ▼
-                    AI-Generated Response
-                    (with game data context)
-                              │
-                              ▼
-                      Format Response
-                              │
-                              ▼
-                Response ← LLM Tool
+Parse Request Body
+    │
+    ▼
+Build Structured Context ──────┐
+    │                          │
+    │         ┌────────────────┘
+    │         ▼
+    │    RAG Search:
+    │    • Characters (top 8)
+    │    • Weapons (top 6)
+    │    • Armor (top 6)
+    │    • Accessories (top 8)
+    │         │
+    ▼         ▼
+Create Prompt with Context
+    │
+    ▼
+Send to Ollama (temp=0.1)
+    │
+    ▼
+Parse JSON Response
+    │
+    ▼
+Return Structured Team JSON
 ```
 
 ## Component Details
 
-### MCP Server (server.py)
-**Responsibilities:**
-- Register and expose 10 MCP tools
-- Route requests to appropriate handlers
-- Validate input/output formats
-- Handle errors gracefully
+### MCP Server (`server.py`)
+- Registers 10 MCP tools
+- Handles tool calls from MCP clients
+- Routes to appropriate handlers
 
-**Key Functions:**
-- `list_tools()` - Return available tools
-- `call_tool()` - Route to tool implementation
+### HTTP Server (`http_server.py`)
+- Single endpoint: POST `/suggest-team`
+- CORS enabled for web clients
+- Structured context building to reduce hallucinations
+- Low temperature (0.1) for consistent output
 
-### Data Loader (loader.py)
-**Responsibilities:**
-- Load TSV files from data/ directory
-- Parse character, ability, passive data
-- Validate data integrity
-- Provide fuzzy name matching
+### Data Loader (`loader.py`)
+- Loads TSV files on startup
+- Fuzzy name matching with `difflib`
+- Caches parsed data
 
-**Data Flow:**
-```
-TSV Files → Parse → Validate → Pydantic Models → Return
-```
+### RAG System (`rag.py`)
+- `all-MiniLM-L6-v2` embeddings
+- Cosine similarity search
+- Cache with hash validation
+- Document types: character, equipment, gameplay, glossary
 
-### RAG System (rag.py)
-**Responsibilities:**
-- Index all game data into embeddings
-- Perform semantic search
-- Manage embedding cache
-- Return ranked results
-
-**Components:**
-- `Document` class - Represents searchable content
-- `RAGSystem` class - Core search engine
-- Cache system - Persistent embeddings storage
-
-**Search Pipeline:**
-```
-Query → Embed → Compare with Docs → Rank by Similarity → Filter → Return
-```
-
-### Ollama Assistant (ollama.py)
-**Responsibilities:**
-- Interface with local Ollama API
-- Integrate RAG context
-- Generate intelligent responses
-- Handle specific query types
-
-**Query Types:**
-- General questions (`query()`)
-- Character comparisons (`compare_characters()`)
-- Team suggestions (`suggest_team_composition()`)
-- Mechanic explanations (`explain_mechanic()`)
-
-**Benefits:**
-- 🆓 Free (no API costs)
-- 🔒 Private (runs locally)
-- 📴 Offline capable
-- ⚡ Fast on modern CPUs
-
-## Project Structure
-
-```
-mkmchat/
-├── __init__.py
-├── __main__.py
-├── server.py              # MCP server (10 tools)
-├── data/
-│   ├── __init__.py
-│   ├── loader.py          # Data loading utilities
-│   └── rag.py             # RAG/embedding system
-├── llm/
-│   ├── __init__.py
-│   └── ollama.py          # Ollama client (local AI)
-├── models/
-│   ├── __init__.py
-│   ├── character.py
-│   ├── equipment.py
-│   └── team.py
-└── tools/
-    ├── __init__.py        # Clean exports
-    ├── character_info.py  # get_character_info
-    ├── equipment_info.py  # get_equipment_info
-    ├── team_suggest.py    # suggest_team
-    ├── semantic_search.py # semantic_search, search_*_advanced
-    └── llm_tools.py       # 4 Ollama functions
-```
-
-## Configuration
-
-| Setting | Environment Variable | Default |
-|---------|---------------------|---------|
-| Ollama URL | `OLLAMA_BASE_URL` | `http://localhost:11434` |
-| Ollama Model | `OLLAMA_MODEL` | `llama3.2:3b` |
-
-## Performance
-
-- **RAG Indexing**: ~2-3s for all documents
-- **Cache Load**: ~0.1s
-- **Semantic Search**: ~0.01s per query
-- **Ollama Response**: 10-20 tokens/sec on modern CPU
+### Ollama Assistant (`ollama.py`)
+- HTTP client for Ollama API
+- System prompt with MK Mobile context
+- RAG integration for context-aware responses

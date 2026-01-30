@@ -315,4 +315,4 @@ New Weapon	Epic	Weapon	+20% attack boost	+50% attack boost	A
 
 ## License
 
-MIT
+GNU GPL v3.0 - See [LICENSE](LICENSE) file for details.

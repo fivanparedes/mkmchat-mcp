@@ -11,8 +11,7 @@ An MCP (Model Context Protocol) server that provides intelligent assistance for 
 - 🤝 **Team Suggestions**: Rule-based team composition recommendations based on synergies
 - 🔍 **Smart Search**: Fuzzy name matching, attribute filtering, and keyword search
 - 🧠 **RAG-Powered Search**: Semantic search across all game data using AI embeddings
-- 🤖 **Gemini AI Integration**: Cloud-based conversational AI (gemini-2.0-flash)
-- 🖥️ **Ollama Local AI**: Run AI locally on CPU without API costs (dolphin-llama3:8b)
+- 🖥️ **Ollama Local AI**: Run AI locally on CPU without API costs (llama3.2:3b)
 - 📚 **Game Knowledge**: Indexed glossary (buffs, debuffs, stats) and gameplay mechanics
 
 ## Architecture Overview
@@ -27,25 +26,23 @@ An MCP (Model Context Protocol) server that provides intelligent assistance for 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           MCP Server (server.py)                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                         MCP Tools (18 total)                         │    │
-│  │  Data Tools          Search Tools           LLM Tools               │    │
-│  │  • get_character_info • search_characters_  • ask_assistant         │    │
+│  │                         MCP Tools (8 total)                          │    │
+│  │  Data Tools          Search Tools           LLM Tools (Ollama)      │    │
+│  │  • get_character_info • search_characters_  • ask_ollama            │    │
 │  │  • get_equipment_info   advanced            • compare_characters_   │    │
-│  │  • suggest_team       • search_equipment_     llm                   │    │
-│  │  • get_glossary         advanced            • suggest_team_llm      │    │
-│  │  • get_gameplay       • search_glossary_    • ask_ollama            │    │
-│  │                         term                • (+ 4 more ollama)     │    │
-│  │                       • search_gameplay                             │    │
-│  │                       • semantic_search                             │    │
+│  │  • suggest_team       • search_equipment_     ollama                │    │
+│  │                         advanced            • suggest_team_ollama   │    │
+│  │                       • semantic_search     • explain_mechanic_     │    │
+│  │                                               ollama                │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
                     │                 │                 │
                     ▼                 ▼                 ▼
          ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-         │  Data Layer  │   │  RAG System  │   │LLM Assistants│
+         │  Data Layer  │   │  RAG System  │   │LLM Assistant │
          │  (loader.py) │   │   (rag.py)   │   │              │
-         │              │   │              │   │ • Gemini     │
-         │ • TSV Parser │   │ • Embeddings │   │ • Ollama     │
+         │              │   │              │   │ • Ollama     │
+         │ • TSV Parser │   │ • Embeddings │   │   (local)    │
          │ • Fuzzy Match│   │ • Vector DB  │   │              │
          │ • Indexing   │   │ • Similarity │   │              │
          └──────────────┘   └──────────────┘   └──────────────┘
@@ -73,15 +70,9 @@ source venv/bin/activate  # On Linux/Mac
 # Install dependencies
 pip install -e .
 
-# For Gemini AI features (optional)
-./setup_gemini.sh
-export GEMINI_API_KEY='your-api-key-here'
-
-# For Ollama local AI (optional, no API key needed)
+# For Ollama local AI (no API key needed)
 ./setup_ollama.sh
 ```
-
-Get your Gemini API key from: https://makersuite.google.com/app/apikey
 
 ### Running the Server
 
@@ -118,8 +109,6 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 | `get_character_info` | Get character details with fuzzy name matching |
 | `get_equipment_info` | Get equipment details with fuzzy name matching |
 | `suggest_team` | Get team composition suggestions (returns all 185 characters for LLM reasoning) |
-| `get_glossary` | Get full game terminology glossary |
-| `get_gameplay` | Get full gameplay mechanics documentation |
 
 ### Search Tools
 
@@ -127,24 +116,16 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 |------|-------------|
 | `search_characters_advanced` | Filter by rarity, class, tier, or keyword in abilities |
 | `search_equipment_advanced` | Filter by rarity, type, tier, or keyword in effects |
-| `search_glossary_term` | Search indexed glossary terms (bleed, stun, etc.) |
-| `search_gameplay` | Search gameplay mechanics by topic (tag-in, equipment, etc.) |
-| `semantic_search` | RAG-powered vector similarity search |
-| `search_by_strategy` | Find characters + equipment for a strategy |
-| `explain_mechanic` | Explain game mechanics using RAG |
+| `semantic_search` | RAG-powered vector similarity search across all game data |
 
-### LLM-Powered Tools
+### LLM-Powered Tools (Ollama)
 
-| Tool | Model | Description |
-|------|-------|-------------|
-| `ask_assistant` | Gemini | General questions with RAG context |
-| `compare_characters_llm` | Gemini | AI-powered character comparison |
-| `suggest_team_llm` | Gemini | AI team building with reasoning |
-| `explain_mechanic_llm` | Gemini | Detailed mechanic explanations |
-| `ask_ollama` | Ollama | Local AI questions (offline) |
-| `compare_characters_ollama` | Ollama | Local character comparison |
-| `suggest_team_ollama` | Ollama | Local team suggestions |
-| `explain_mechanic_ollama` | Ollama | Local mechanic explanations |
+| Tool | Description |
+|------|-------------|
+| `ask_ollama` | Local AI questions with RAG context (offline capable) |
+| `compare_characters_ollama` | Local AI character comparison |
+| `suggest_team_ollama` | Local AI team suggestions |
+| `explain_mechanic_ollama` | Local AI mechanic explanations |
 
 ## Data Statistics
 
@@ -174,19 +155,20 @@ search_characters_advanced(rarity="Diamond", tier="S+")
 search_equipment_advanced(rarity="Epic", equip_type="Weapon", keyword="fire")
 ```
 
-### Indexed Glossary
-Search specific game terms instead of loading full document:
+### Semantic Search
+Use natural language queries to search across all game data:
 ```python
-search_glossary_term("bleed")  # Returns: [DEBUFFS] Deals damage over time.
-search_glossary_term("stun")   # Returns: [DEBUFFS] Temporarily prevents attacking...
-```
+# Search for characters with fire abilities
+semantic_search(query="characters with fire attacks", doc_type="character")
 
-### Indexed Gameplay
-Search gameplay mechanics by topic:
-```python
-search_gameplay("tag-in")       # Returns tag-in/tag-out mechanics
-search_gameplay("equipment")    # Returns equipment slot information
-search_gameplay("brutality")    # Returns brutality/friendship info
+# Search for equipment that boosts critical hits
+semantic_search(query="equipment that boosts critical hit", doc_type="equipment")
+
+# Search glossary terms
+semantic_search(query="bleed damage over time", doc_type="glossary")
+
+# Search gameplay mechanics
+semantic_search(query="tag-in mechanics", doc_type="gameplay")
 ```
 
 ## Development
@@ -228,8 +210,7 @@ mkmchat/
 │   │   ├── semantic_search.py
 │   │   └── llm_tools.py
 │   ├── llm/                 # LLM integrations
-│   │   ├── gemini.py        # Google Gemini (gemini-2.0-flash)
-│   │   └── ollama.py        # Local Ollama (dolphin-llama3:8b)
+│   │   └── ollama.py        # Local Ollama (llama3.2:3b)
 │   ├── data/                # Data loading and querying
 │   │   ├── loader.py        # DataLoader with fuzzy search
 │   │   └── rag.py           # RAG system with embeddings
@@ -240,28 +221,17 @@ mkmchat/
 └── tests/                   # Test suite
 ```
 
-## AI Assistants
-
-### Gemini AI (Cloud-based)
-Cloud-based AI using `gemini-2.0-flash` for best quality responses.
-
-**Setup:**
-```bash
-export GEMINI_API_KEY="your-api-key-here"
-pip install google-generativeai
-```
-
-**Model:** `gemini-2.0-flash`
+## AI Assistant
 
 ### Ollama Local AI (CPU-only)
-Run AI locally without API costs using `dolphin-llama3:8b`.
+Run AI locally without API costs using `llama3.2:3b`.
 
 **Setup:**
 ```bash
 ./setup_ollama.sh  # Installs Ollama + model
 ```
 
-**Model:** `dolphin-llama3:8b` (configurable)
+**Model:** `llama3.2:3b` (configurable)
 
 **Benefits:**
 - ✅ Free (no API costs)
@@ -273,10 +243,8 @@ Run AI locally without API costs using `dolphin-llama3:8b`.
 
 | Setting | Environment Variable | Default |
 |---------|---------------------|---------|
-| Gemini API Key | `GEMINI_API_KEY` | Required for Gemini tools |
 | Ollama URL | `OLLAMA_BASE_URL` | `http://localhost:11434` |
-| Gemini Model | (code) | `gemini-2.0-flash` |
-| Ollama Model | (code) | `dolphin-llama3:8b` |
+| Ollama Model | `OLLAMA_MODEL` | `llama3.2:3b` |
 
 ## Adding Data
 
@@ -308,7 +276,6 @@ New Weapon	Epic	Weapon	+20% attack boost	+50% attack boost	A
 
 ## Documentation
 
-- [GEMINI_INTEGRATION.md](GEMINI_INTEGRATION.md) - Gemini AI setup guide
 - [OLLAMA_INTEGRATION.md](OLLAMA_INTEGRATION.md) - Ollama local AI setup
 - [RAG_SYSTEM.md](RAG_SYSTEM.md) - RAG system documentation
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed architecture docs

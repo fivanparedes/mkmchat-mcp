@@ -1,0 +1,79 @@
+{
+  "lists": [
+    {
+      "id": "fd60438c-77f9-4870-b54a-45c885909935",
+      "title": "Backlog",
+      "cards": [
+        {
+          "id": "6f5507c8-1b73-4ab6-9bf3-a19e7659c260",
+          "listId": "fd60438c-77f9-4870-b54a-45c885909935",
+          "title": "Cargar modificadores",
+          "description": "",
+          "labels": [],
+          "checkboxes": [],
+          "comments": []
+        },
+        {
+          "id": "7b34a30a-eef8-4d18-b9bc-01a9f9890737",
+          "listId": "fd60438c-77f9-4870-b54a-45c885909935",
+          "title": "Cargar modos de juego",
+          "description": "",
+          "labels": [],
+          "checkboxes": [],
+          "comments": []
+        }
+      ]
+    },
+    {
+      "id": "b6c01d82-7421-4367-8fe9-004ad15d6bbf",
+      "title": "To Do",
+      "cards": [
+        {
+          "id": "e3ec20bd-8088-4747-911f-3ac9d3e2b1e5",
+          "listId": "b6c01d82-7421-4367-8fe9-004ad15d6bbf",
+          "title": "Cargar glosario",
+          "description": "",
+          "labels": [],
+          "checkboxes": [],
+          "comments": []
+        }
+      ]
+    },
+    {
+      "id": "93cffed9-dc46-49e3-b038-dcad537d3bce",
+      "title": "Doing",
+      "cards": []
+    },
+    {
+      "id": "4d0749e7-0cb4-4d89-965b-982be2de5eaa",
+      "title": "Done",
+      "cards": [
+        {
+          "id": "2828f39c-7904-46b8-8515-5ca6d89e565a",
+          "listId": "4d0749e7-0cb4-4d89-965b-982be2de5eaa",
+          "title": "Terminar de cargar equipamiento de torre",
+          "description": "",
+          "labels": [],
+          "checkboxes": [],
+          "comments": []
+        },
+        {
+          "id": "c926ea28-706b-431f-b603-c13979f44369",
+          "listId": "4d0749e7-0cb4-4d89-965b-982be2de5eaa",
+          "title": "Cargar equipamiento de kripta",
+          "description": "",
+          "labels": [],
+          "checkboxes": [],
+          "comments": []
+        }
+      ]
+    }
+  ],
+  "archive": {
+    "lists": [],
+    "cards": []
+  },
+  "settings": {
+    "labels": []
+  }
+}

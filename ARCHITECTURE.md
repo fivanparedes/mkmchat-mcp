@@ -7,7 +7,7 @@ Visual overview of the mkmchat system architecture.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         MCP Client                               │
-│                   (Claude Desktop, etc.)                         │
+│                   (Claude Desktop, VS Code, etc.)                │
 └────────────────────────────┬────────────────────────────────────┘
                              │ MCP Protocol
                              ▼
@@ -15,23 +15,27 @@ Visual overview of the mkmchat system architecture.
 │                      MCP Server (server.py)                      │
 │                                                                   │
 │  ┌───────────────────┐  ┌───────────────────┐  ┌─────────────┐ │
-│  │   Base Tools (3)  │  │   RAG Tools (3)   │  │ LLM Tools(4)│ │
-│  │                   │  │                   │  │             │ │
-│  │ • character_info  │  │ • semantic_search │  │ • ask_asst  │ │
-│  │ • equipment_info  │  │ • search_strategy │  │ • compare   │ │
-│  │ • suggest_team    │  │ • explain_mech    │  │ • suggest   │ │
+│  │   Base Tools (3)  │  │  Search Tools (3) │  │ LLM Tools(4)│ │
+│  │                   │  │                   │  │  (Ollama)   │ │
+│  │ • character_info  │  │ • semantic_search │  │ • ask_ollama│ │
+│  │ • equipment_info  │  │ • search_chars_   │  │ • compare_  │ │
+│  │ • suggest_team    │  │   advanced        │  │   ollama    │ │
+│  │                   │  │ • search_equip_   │  │ • suggest_  │ │
+│  │                   │  │   advanced        │  │   ollama    │ │
+│  │                   │  │                   │  │ • explain_  │ │
+│  │                   │  │                   │  │   ollama    │ │
 │  └─────────┬─────────┘  └─────────┬─────────┘  └──────┬──────┘ │
 └────────────┼────────────────────────┼────────────────────┼───────┘
              │                        │                    │
              ▼                        ▼                    ▼
 ┌────────────────────┐   ┌────────────────────┐   ┌──────────────┐
-│   Data Loader      │   │    RAG System      │   │   Gemini     │
+│   Data Loader      │   │    RAG System      │   │   Ollama     │
 │   (loader.py)      │   │    (rag.py)        │   │  Assistant   │
-│                    │   │                    │   │  (gemini.py) │
+│                    │   │                    │   │  (ollama.py) │
 │ • Load TSV files   │   │ • Embeddings       │   │              │
 │ • Parse characters │   │ • Semantic search  │   │ • LLM queries│
 │ • Parse equipment  │   │ • Cache system     │   │ • RAG context│
-│ • Validate data    │   │ • 204 docs indexed │   │ • Reasoning  │
+│ • Validate data    │   │ • Doc indexing     │   │ • Local AI   │
 └─────────┬──────────┘   └──────────┬─────────┘   └───────┬──────┘
           │                         │                      │
           │                         │         ┌────────────┘
@@ -47,7 +51,7 @@ Visual overview of the mkmchat system architecture.
 │                                                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │ equipment    │  │ gameplay.txt │  │ glossary.txt │  │
-│  │ _basic.tsv   │  │              │  │              │  │
+│  │ _*.tsv       │  │              │  │              │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
 │  ┌──────────────────────────────────────────────────┐   │
@@ -72,12 +76,12 @@ MCP Client → MCP Server → Base Tool → Data Loader → TSV Files
                   Response ← Tool ← Data Loader
 ```
 
-### 2. Semantic Search (RAG Tools)
+### 2. Semantic Search (Search Tools)
 ```
 User Query ("find fire characters")
     │
     ▼
-MCP Client → MCP Server → RAG Tool
+MCP Client → MCP Server → Search Tool
                               │
                               ▼
                          RAG System
@@ -106,7 +110,7 @@ MCP Client → MCP Server → RAG Tool
                  Format Response
                        │
                        ▼
-            Response ← RAG Tool
+            Response ← Search Tool
 ```
 
 ### 3. AI Query (LLM Tools)
@@ -117,7 +121,7 @@ User Query ("What's best counter to freeze?")
 MCP Client → MCP Server → LLM Tool
                               │
                               ▼
-                      Gemini Assistant
+                      Ollama Assistant
                               │
                     ┌─────────┴─────────┐
                     ▼                   ▼
@@ -129,7 +133,7 @@ MCP Client → MCP Server → LLM Tool
                     │                   │
                     └─────────┬─────────┘
                               ▼
-                    Gemini API (gemini-1.5-flash)
+                    Ollama API (llama3.2:3b)
                               │
                               ▼
                     AI-Generated Response
@@ -160,7 +164,7 @@ MCP Client → MCP Server → LLM Tool
 - Load TSV files from data/ directory
 - Parse character, ability, passive data
 - Validate data integrity
-- Fallback to JSON if TSV unavailable
+- Provide fuzzy name matching
 
 **Data Flow:**
 ```
@@ -184,9 +188,9 @@ TSV Files → Parse → Validate → Pydantic Models → Return
 Query → Embed → Compare with Docs → Rank by Similarity → Filter → Return
 ```
 
-### Gemini Assistant (gemini.py)
+### Ollama Assistant (ollama.py)
 **Responsibilities:**
-- Interface with Gemini API
+- Interface with local Ollama API
 - Integrate RAG context
 - Generate intelligent responses
 - Handle specific query types
@@ -197,164 +201,50 @@ Query → Embed → Compare with Docs → Rank by Similarity → Filter → Retu
 - Team suggestions (`suggest_team_composition()`)
 - Mechanic explanations (`explain_mechanic()`)
 
-**Processing Flow:**
+**Benefits:**
+- 🆓 Free (no API costs)
+- 🔒 Private (runs locally)
+- 📴 Offline capable
+- ⚡ Fast on modern CPUs
+
+## Project Structure
+
 ```
-Question → RAG Retrieval → Build Prompt → Gemini API → Parse Response → Return
-```
-
-## Technology Stack
-
-```
-┌─────────────────────────────────────────┐
-│         Application Layer                │
-│  • Python 3.10+                         │
-│  • asyncio for async operations         │
-│  • Pydantic for data validation         │
-└─────────────────────────────────────────┘
-┌─────────────────────────────────────────┐
-│         Integration Layer                │
-│  • MCP Protocol (tool serving)          │
-│  • Google Gemini API (LLM)              │
-│  • sentence-transformers (embeddings)   │
-└─────────────────────────────────────────┘
-┌─────────────────────────────────────────┐
-│           Data Layer                     │
-│  • TSV files (structured data)          │
-│  • Text files (unstructured data)       │
-│  • Pickle cache (embeddings)            │
-└─────────────────────────────────────────┘
-```
-
-## Performance Characteristics
-
-### Base Tools
-- **Latency**: ~0.01s (file I/O + parsing)
-- **Bottleneck**: Disk I/O
-- **Optimization**: In-memory caching (future)
-
-### RAG Tools
-- **Latency**: 
-  - First run: ~2-3s (indexing)
-  - With cache: ~0.01s (search only)
-- **Bottleneck**: Embedding generation (first run)
-- **Optimization**: Persistent cache
-
-### LLM Tools
-- **Latency**: 
-  - gemini-1.5-flash: ~1-3s
-  - gemini-1.5-pro: ~3-8s
-- **Bottleneck**: API call
-- **Optimization**: RAG reduces hallucinations, improving answer quality
-
-## Scalability
-
-### Current Limits
-- **Documents**: 204 (easily scales to 10,000+)
-- **Embedding Dim**: 384 (fixed by model)
-- **Cache Size**: ~2MB (scales linearly)
-- **API Rate**: 15 RPM (Gemini flash, free tier)
-
-### Scaling Strategies
-1. **More Documents**: RAG system scales well (tested up to 100k)
-2. **Better Search**: Upgrade to larger embedding model
-3. **Faster LLM**: Use streaming responses
-4. **Higher Rate**: Paid Gemini tier (higher RPM)
-
-## Error Handling
-
-### Error Flow
-```
-Error Occurs
-    │
-    ▼
-Catch in Tool
-    │
-    ▼
-Log Error Details
-    │
-    ▼
-Format MCP Error Response
-    │
-    ▼
-Return to Client with:
-  • Error message
-  • Error type
-  • Suggestions
+mkmchat/
+├── __init__.py
+├── __main__.py
+├── server.py              # MCP server (10 tools)
+├── data/
+│   ├── __init__.py
+│   ├── loader.py          # Data loading utilities
+│   └── rag.py             # RAG/embedding system
+├── llm/
+│   ├── __init__.py
+│   └── ollama.py          # Ollama client (local AI)
+├── models/
+│   ├── __init__.py
+│   ├── character.py
+│   ├── equipment.py
+│   └── team.py
+└── tools/
+    ├── __init__.py        # Clean exports
+    ├── character_info.py  # get_character_info
+    ├── equipment_info.py  # get_equipment_info
+    ├── team_suggest.py    # suggest_team
+    ├── semantic_search.py # semantic_search, search_*_advanced
+    └── llm_tools.py       # 4 Ollama functions
 ```
 
-### Error Types
-1. **Data Errors**: TSV parsing failures
-2. **RAG Errors**: Embedding/search failures
-3. **API Errors**: Gemini API issues
-4. **Validation Errors**: Invalid input
+## Configuration
 
-## Security
+| Setting | Environment Variable | Default |
+|---------|---------------------|---------|
+| Ollama URL | `OLLAMA_BASE_URL` | `http://localhost:11434` |
+| Ollama Model | `OLLAMA_MODEL` | `llama3.2:3b` |
 
-### Data Protection
-- No sensitive data stored
-- API keys in environment variables
-- No user data persistence
+## Performance
 
-### API Security
-- API key required for Gemini
-- Rate limiting by Google
-- No authentication for local MCP server
-
-## Monitoring & Debugging
-
-### Available Tools
-1. **Test Suites**:
-   - `tests/test_rag.py` - RAG system
-   - `tests/test_gemini.py` - LLM integration
-   - `tests/test_tools.py` - Base tools
-
-2. **Logging**:
-   - Console output for errors
-   - Tool execution traces
-
-3. **MCP Inspector**:
-   - Web UI at http://localhost:5173
-   - Interactive tool testing
-   - Request/response inspection
-
-## Deployment
-
-### Local Development
-```
-venv/ → Isolated environment
-data/ → Game data
-mkmchat/ → Source code
-tests/ → Test suite
-```
-
-### Production (MCP Client)
-```
-Claude Desktop Config:
-{
-  "mcpServers": {
-    "mkmchat": {
-      "command": "python",
-      "args": ["-m", "mkmchat.server"],
-      "cwd": "/path/to/mkmchat",
-      "env": {
-        "GEMINI_API_KEY": "your-key"
-      }
-    }
-  }
-}
-```
-
-## Future Architecture
-
-### Planned Enhancements
-1. **Database**: SQLite for complex queries
-2. **Caching**: Redis for faster responses
-3. **Streaming**: SSE for long LLM responses
-4. **Multi-model**: Support multiple LLM providers
-5. **Web UI**: Direct web interface (beyond MCP)
-
----
-
-**Architecture Version**: 2.0 (with RAG + Gemini)  
-**Last Updated**: After Gemini integration  
-**Complexity**: Medium (3 layers, 10 tools, 3 subsystems)
+- **RAG Indexing**: ~2-3s for all documents
+- **Cache Load**: ~0.1s
+- **Semantic Search**: ~0.01s per query
+- **Ollama Response**: 10-20 tokens/sec on modern CPU

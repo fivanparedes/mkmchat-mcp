@@ -1,5 +1,5 @@
-"""LLM integration module"""
+"""LLM integration module - Ollama local AI only"""
 
-from mkmchat.llm.gemini import GeminiAssistant, get_gemini_assistant
+from mkmchat.llm.ollama import OllamaAssistant, get_ollama_assistant
 
-__all__ = ["GeminiAssistant", "get_gemini_assistant"]
+__all__ = ["OllamaAssistant", "get_ollama_assistant"]

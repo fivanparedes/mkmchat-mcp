@@ -23,47 +23,66 @@ def build_structured_context(rag, strategy: str) -> Dict[str, str]:
     Build clearly structured context for the LLM to reduce hallucinations.
     
     Returns dict with separate lists for characters and equipment by type.
+    Results are already sorted by tier from RAG system (prioritize_tier=True).
     """
+    from pathlib import Path
+    
     context = {
         "characters": "",
         "weapons": "",
         "armor": "",
-        "accessories": ""
+        "accessories": "",
+        "glossary": "",
+        "gameplay": ""
     }
+    
+    # Load glossary from file
+    glossary_file = Path(__file__).parent.parent / "data" / "glossary.txt"
+    if glossary_file.exists():
+        context["glossary"] = glossary_file.read_text(encoding='utf-8').strip()
+    
+    # Load gameplay from file
+    gameplay_file = Path(__file__).parent.parent / "data" / "gameplay.txt"
+    if gameplay_file.exists():
+        context["gameplay"] = gameplay_file.read_text(encoding='utf-8').strip()
     
     if not rag or not rag.enabled:
         return context
     
-    # Get characters - extract names and passives clearly
-    char_results = rag.search_characters(strategy, top_k=8)
+    # Get characters - already sorted by tier in RAG (prioritize_tier=True by default)
+    char_results = rag.search_characters(strategy, top_k=60)
     char_list = []
     for doc, score in char_results:
         name = doc.metadata.get("name", "Unknown")
+        rarity = doc.metadata.get("rarity", "?")
+        tier = doc.metadata.get("tier", "?")
         # Extract passive from content (it's in the document content)
         passive = ""
         for line in doc.content.split("\n"):
             if line.startswith("Passive:"):
-                passive = line.replace("Passive:", "").strip()[:100]
+                passive = line.replace("Passive:", "").strip()
                 break
-        char_list.append(f"- {name} | Passive: {passive}" if passive else f"- {name}")
+        char_list.append(f"- [{tier}] Rarity: {rarity} | Name: {name} | Passive: {passive}" if passive else f"- [{tier}] Rarity: {rarity} | Name: {name}")
+    
     context["characters"] = "\n".join(char_list) if char_list else "No matches found"
     
-    # Get equipment - separate by type using metadata
-    equip_results = rag.search_equipment(strategy, top_k=20)
+    # Get equipment - already sorted by tier in RAG, separate by type for display
+    equip_results = rag.search_equipment(strategy, top_k=40)
     weapons, armor, accessories = [], [], []
     
     for doc, score in equip_results:
         name = doc.metadata.get("name", "Unknown")
         equip_type = doc.metadata.get("type", "").strip()
+        tier = doc.metadata.get("tier", "?")
         
         # Extract effect from content
         effect = ""
         for line in doc.content.split("\n"):
             if line.startswith("Effect:"):
-                effect = line.replace("Effect:", "").strip()[:60]
+                effect = line.replace("Effect:", "").strip()
                 break
         
-        item_str = f"{name}" + (f" ({effect})" if effect else "")
+        item_str = f"- [{tier}] {name}" + (f" ({effect})" if effect else "")
         
         # Categorize by type field from TSV
         if equip_type == "Weapon":
@@ -73,9 +92,10 @@ def build_structured_context(rag, strategy: str) -> Dict[str, str]:
         elif equip_type == "Accessory":
             accessories.append(item_str)
     
-    context["weapons"] = "\n".join([f"- {w}" for w in weapons[:6]]) if weapons else "None found"
-    context["armor"] = "\n".join([f"- {a}" for a in armor[:6]]) if armor else "None found"
-    context["accessories"] = "\n".join([f"- {a}" for a in accessories[:8]]) if accessories else "None found"
+    # Items within each category maintain tier order from RAG
+    context["weapons"] = "\n".join(weapons[:]) if weapons else "None found"
+    context["armor"] = "\n".join(armor[:]) if armor else "None found"
+    context["accessories"] = "\n".join(accessories[:]) if accessories else "None found"
     
     return context
 
@@ -108,41 +128,56 @@ async def suggest_team_json(
         
         owned_filter = ""
         if owned_characters:
-            owned_filter = f"\nUser owns: {', '.join(owned_characters)}. Prioritize these characters."
+            owned_filter = f"User owns: {', '.join(owned_characters)}. Prioritize these characters.\n"
         
-        # Simplified prompt with explicit instructions and clear data separation
-        prompt = f"""You are a Mortal Kombat Mobile team builder assistant.
+        # System prompt: static rules and reference data (reset each call with keep_alive=0)
+        system_prompt = f"""You are a Mortal Kombat Mobile team builder assistant.
 
-=== AVAILABLE CHARACTERS (pick exactly 3 from this list) ===
+=== GAMEPLAY MECHANICS ===
+{context['gameplay']}
+
+=== GAME GLOSSARY ===
+{context['glossary']}
+
+=== RULES ===
+- Suggest EXACTLY 3 characters from the AVAILABLE CHARACTERS list.
+- Each character gets: 1 weapon, 1 armor, 1 accessory. Diamond characters get 1 extra slot (any type).
+- COPY all names and descriptions VERBATIM from the lists. Do NOT shorten or paraphrase.
+- Do NOT repeat characters or equipment.
+- If equipment pieces have character-specific effects, prioritize characters that benefit from them only if they are in the AVAILABLE CHARACTERS list. Equip them accordingly.
+- TIER RANKING (best to worst): S+ > S > A > B > C > D. Prefer higher tiers but consider synergy.
+
+=== OUTPUT FORMAT ===
+Respond with ONLY this JSON structure:
+{{
+    "char1": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [{{"slot": "weapon", "name": "<name>", "effect": "<effect>"}}, {{"slot": "armor", "name": "<name>", "effect": "<effect>"}}, {{"slot": "accessory", "name": "<name>", "effect": "<effect>"}}]}},
+    "char2": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [same structure]}},
+    "char3": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [same structure]}},
+    "strategy": "<explanation of team synergy>"
+}}"""
+
+        # User prompt: the specific request with available items
+        user_prompt = f"""{owned_filter}Build a team for: {strategy}
+
+=== AVAILABLE CHARACTERS ===
 {context['characters']}
 
-=== AVAILABLE WEAPONS (pick 1 per character from this list) ===
+=== AVAILABLE WEAPONS ===
 {context['weapons']}
 
-=== AVAILABLE ARMOR (pick 1 per character from this list) ===
+=== AVAILABLE ARMOR ===
 {context['armor']}
 
-=== AVAILABLE ACCESSORIES (pick 2 per character from this list) ===
-{context['accessories']}
+=== AVAILABLE ACCESSORIES ===
+{context['accessories']}"""
 
-STRICT RULES:
-1. Pick character names EXACTLY as shown in the AVAILABLE CHARACTERS list
-2. Pick weapon names EXACTLY as shown in the AVAILABLE WEAPONS list
-3. Pick armor names EXACTLY as shown in the AVAILABLE ARMOR list
-4. Pick accessory names EXACTLY as shown in the AVAILABLE ACCESSORIES list
-5. Each character gets: 1 weapon, 1 armor, 2 accessories
-6. Do NOT invent or modify names
-{owned_filter}
-
-Strategy requested: {strategy}
-
-Respond with ONLY this JSON structure (no other text):
-{{
-    "char1": {{"name": "<exact character name>", "passive": "<passive description>", "equipment": [{{"slot": "weapon", "name": "<exact weapon name>", "effect": "<effect>"}}, {{"slot": "armor", "name": "<exact armor name>", "effect": "<effect>"}}, {{"slot": "accessory1", "name": "<exact accessory name>", "effect": "<effect>"}}, {{"slot": "accessory2", "name": "<exact accessory name>", "effect": "<effect>"}}]}},
-    "char2": {{"name": "<exact character name>", "passive": "<passive description>", "equipment": [same structure as char1]}},
-    "char3": {{"name": "<exact character name>", "passive": "<passive description>", "equipment": [same structure as char1]}},
-    "strategy": "<explanation of team synergy and how to use it>"
-}}"""
+        # Log prompt and context to file (overwrite each call)
+        from pathlib import Path
+        log_file = Path(__file__).parent.parent / "prompt_debug.log"
+        with open(log_file, 'w', encoding='utf-8') as f:
+            f.write(f"=== SYSTEM PROMPT ===\n{system_prompt}\n\n")
+            f.write(f"=== USER PROMPT ===\n{user_prompt}\n")
+        logger.info(f"Prompt debug log written to: {log_file}")
 
         import httpx
         
@@ -151,9 +186,11 @@ Respond with ONLY this JSON structure (no other text):
                 f"{assistant.base_url}/api/generate",
                 json={
                     "model": assistant.model_name,
-                    "prompt": prompt,
+                    "system": system_prompt,
+                    "prompt": user_prompt,
                     "stream": False,
                     "format": "json",
+                    "keep_alive": 0,  # Unload model after request to reset context
                     "options": {
                         "temperature": 0.1,  # Very low temperature for consistent output
                         "num_predict": 2000

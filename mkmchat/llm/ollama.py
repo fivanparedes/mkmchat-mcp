@@ -437,5 +437,5 @@ def get_ollama_assistant(
     """Get or create Ollama assistant singleton"""
     global _ollama_assistant
     if _ollama_assistant is None:
-        _ollama_assistant = OllamaAssistant(rag_system=rag_system, model_name='dolphin-llama3:8b')
+        _ollama_assistant = OllamaAssistant(rag_system=rag_system, model_name='mistral-nemo:12b')
     return _ollama_assistant

@@ -17,6 +17,17 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Tier ranking for sorting (higher = better)
+TIER_RANK = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4, "S+": 5}
+TIER_BOOST = 0.1  # Score boost per tier level
+
+
+def get_tier_rank(tier: str) -> int:
+    """Get numeric rank for a tier string."""
+    if tier:
+        return TIER_RANK.get(tier.strip(), 0)
+    return 0
+
 
 class Document:
     """A document chunk with metadata"""
@@ -225,7 +236,8 @@ class RAGSystem:
                     'name': char_name,
                     'class': char_info.get('class'),
                     'rarity': char_info.get('rarity'),
-                    'synergy': char_info.get('synergy')
+                    'synergy': char_info.get('synergy'),
+                    'tier': char_info.get('tier', '')
                 },
                 doc_type='character'
             )
@@ -273,6 +285,7 @@ class RAGSystem:
                             'name': row['name'],
                             'type': row['type'],
                             'rarity': row.get('rarity'),
+                            'tier': row.get('tier', ''),
                             'source': source
                         },
                         doc_type='equipment'
@@ -379,13 +392,81 @@ class RAGSystem:
         
         return results
     
-    def search_characters(self, query: str, top_k: int = 5) -> List[Tuple[Document, float]]:
-        """Search for characters matching the query"""
-        return self.search(query, top_k=top_k, doc_type='character')
+    def search_characters(
+        self,
+        query: str,
+        top_k: int = 10,
+        prioritize_tier: bool = True
+    ) -> List[Tuple[Document, float]]:
+        """
+        Search for characters matching the query with optional tier prioritization.
+        
+        Args:
+            query: Search query
+            top_k: Number of results to return
+            prioritize_tier: If True, boost scores based on tier (S+ > S > A > B > C > D)
+            
+        Returns:
+            List of (Document, score) tuples sorted by adjusted score
+        """
+        # Fetch more results to allow tier reranking
+        fetch_k = top_k * 3 if prioritize_tier else top_k
+        base_results = self.search(query, top_k=fetch_k, doc_type='character')
+        
+        if not prioritize_tier:
+            return base_results[:top_k]
+        
+        # Apply tier boost to scores
+        adjusted_results = []
+        for doc, score in base_results:
+            tier = doc.metadata.get('tier', '')
+            tier_rank = get_tier_rank(tier)
+            # Boost: S+ gets +0.5, S gets +0.4, A gets +0.3, etc.
+            tier_bonus = tier_rank * TIER_BOOST
+            adjusted_score = score + tier_bonus
+            adjusted_results.append((doc, adjusted_score))
+        
+        # Sort by adjusted score (highest first) and limit to top_k
+        adjusted_results.sort(key=lambda x: x[1], reverse=True)
+        return adjusted_results[:top_k]
     
-    def search_equipment(self, query: str, top_k: int = 5) -> List[Tuple[Document, float]]:
-        """Search for equipment matching the query"""
-        return self.search(query, top_k=top_k, doc_type='equipment')
+    def search_equipment(
+        self,
+        query: str,
+        top_k: int = 20,
+        prioritize_tier: bool = True
+    ) -> List[Tuple[Document, float]]:
+        """
+        Search for equipment matching the query with optional tier prioritization.
+        
+        Args:
+            query: Search query
+            top_k: Number of results to return
+            prioritize_tier: If True, boost scores based on tier (S+ > S > A > B > C > D)
+            
+        Returns:
+            List of (Document, score) tuples sorted by adjusted score
+        """
+        # Fetch more results to allow tier reranking
+        fetch_k = top_k * 3 if prioritize_tier else top_k
+        base_results = self.search(query, top_k=fetch_k, doc_type='equipment')
+        
+        if not prioritize_tier:
+            return base_results[:top_k]
+        
+        # Apply tier boost to scores
+        adjusted_results = []
+        for doc, score in base_results:
+            tier = doc.metadata.get('tier', '')
+            tier_rank = get_tier_rank(tier)
+            # Boost: S+ gets +0.5, S gets +0.4, A gets +0.3, etc.
+            tier_bonus = tier_rank * TIER_BOOST
+            adjusted_score = score + tier_bonus
+            adjusted_results.append((doc, adjusted_score))
+        
+        # Sort by adjusted score (highest first) and limit to top_k
+        adjusted_results.sort(key=lambda x: x[1], reverse=True)
+        return adjusted_results[:top_k]
     
     def search_gameplay(self, query: str, top_k: int = 3) -> List[Tuple[Document, float]]:
         """Search for gameplay mechanics matching the query"""

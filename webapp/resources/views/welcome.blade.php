@@ -179,7 +179,7 @@
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
                 <p class="text-xs text-mk-muted">
                     &copy; {{ date('Y') }} MKMChat &mdash; Not affiliated with Warner Bros. or NetherRealm Studios.
-                    Released under the <a href="https://opensource.org/licenses/MIT" target="_blank" class="text-mk-fire hover:underline">MIT License</a>.
+                    Released under the <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" class="text-mk-fire hover:underline">GPL v3.0</a>.
                 </p>
                 <p class="text-xs text-mk-muted">
                     Made by <a href="https://x.com/hacheipe399" target="_blank" class="text-mk-fire font-semibold hover:underline">@hacheipe399</a>

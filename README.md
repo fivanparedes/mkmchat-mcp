@@ -297,6 +297,6 @@ cd webapp && php artisan test
 
 ## License
 
-MIT License  see [LICENSE](LICENSE).  
+GNU General Public License v3.0 — see [LICENSE](LICENSE).  
 Not affiliated with Warner Bros. or NetherRealm Studios.  
 Made by [@hacheipe399](https://x.com/hacheipe399).

@@ -28,7 +28,7 @@
                 <div class="max-w-md mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
                     <p class="text-xs text-mk-muted">
                         &copy; {{ date('Y') }} MKMChat &mdash;
-                        <a href="https://opensource.org/licenses/MIT" target="_blank" class="text-mk-fire hover:underline">MIT License</a>
+                        <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" class="text-mk-fire hover:underline">GPL v3.0</a>
                     </p>
                     <p class="text-xs text-mk-muted">
                         Made by <a href="https://x.com/hacheipe399" target="_blank" class="text-mk-fire font-semibold hover:underline">@hacheipe399</a>

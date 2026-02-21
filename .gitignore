@@ -49,3 +49,46 @@ Thumbs.db
 
 # Data (is in another repo)
 data/
+
+# --- Laravel webapp (webapp/) -------------------------------------------
+
+# Dependencies
+webapp/vendor/
+webapp/node_modules/
+
+# Built assets
+webapp/public/build/
+webapp/public/hot
+webapp/public/storage
+
+# Environment & secrets
+webapp/.env
+webapp/.env.backup
+webapp/.env.production
+webapp/*.key
+
+# Database
+webapp/database/database.sqlite
+webapp/database/database.sqlite-wal
+webapp/database/database.sqlite-shm
+
+# Framework cache / compiled files
+webapp/bootstrap/cache/*.php
+webapp/storage/framework/cache/
+webapp/storage/framework/sessions/
+webapp/storage/framework/views/
+webapp/storage/logs/
+
+# Testing
+webapp/.phpunit.result.cache
+webapp/.phpunit.cache/
+
+# NPM / Yarn logs
+webapp/npm-debug.log
+webapp/yarn-error.log
+
+# Miscellaneous
+webapp/.php-cs-fixer.cache
+webapp/Homestead.json
+webapp/Homestead.yaml
+webapp/auth.json

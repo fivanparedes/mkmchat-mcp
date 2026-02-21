@@ -236,6 +236,78 @@ Respond with ONLY this JSON structure:
         return {"error": str(e)}
 
 
+async def ask_question_json(question: str) -> dict:
+    """Answer a free-form question with RAG context, returning Markdown text."""
+    try:
+        rag = get_rag_system()
+        assistant = get_ollama_assistant(rag_system=rag)
+
+        if not assistant.enabled:
+            return {"error": "Ollama assistant not available. Make sure Ollama is running."}
+
+        context = build_structured_context(rag, question)
+
+        system_prompt = f"""You are a knowledgeable Mortal Kombat Mobile game assistant.
+
+=== GAMEPLAY MECHANICS ===
+{context['gameplay']}
+
+=== GAME GLOSSARY ===
+{context['glossary']}
+
+=== RELEVANT CHARACTERS ===
+{context['characters']}
+
+=== RELEVANT WEAPONS ===
+{context['weapons']}
+
+=== RELEVANT ARMOR ===
+{context['armor']}
+
+=== RELEVANT ACCESSORIES ===
+{context['accessories']}
+
+=== RULES ===
+- Answer clearly and accurately using the context above.
+- Use Markdown formatting: headings (##), bold (**text**), bullet lists (- item), numbered lists, and code blocks if relevant.
+- If a question cannot be answered from the provided context, say so honestly.
+- Be concise but thorough."""
+
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{assistant.base_url}/api/generate",
+                json={
+                    "model": assistant.model_name,
+                    "system": system_prompt,
+                    "prompt": question,
+                    "stream": False,
+                    "keep_alive": 0,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_predict": 1500
+                    }
+                },
+                timeout=None
+            )
+
+            if response.status_code != 200:
+                return {"error": f"Ollama API returned status {response.status_code}"}
+
+            result = response.json()
+            response_text = result.get("response", "").strip()
+
+            if not response_text:
+                return {"error": "Empty response from LLM"}
+
+            return {"response": response_text}
+
+    except Exception as e:
+        logger.error(f"Error in ask_question_json: {e}")
+        return {"error": str(e)}
+
+
 class MKMobileHTTPHandler(BaseHTTPRequestHandler):
     """HTTP request handler for MK Mobile API"""
     
@@ -260,7 +332,7 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             self._set_headers(200)
             response = {
                 "service": "MK Mobile Assistant API",
-                "version": "2.0.0",
+                "version": "2.1.0",
                 "endpoints": {
                     "/suggest-team": {
                         "method": "POST",
@@ -268,6 +340,13 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
                         "body": {
                             "strategy": "string (required)",
                             "owned_characters": "array of strings (optional)"
+                        }
+                    },
+                    "/ask-question": {
+                        "method": "POST",
+                        "description": "Ask any question about MK Mobile, returns Markdown text",
+                        "body": {
+                            "question": "string (required)"
                         }
                     }
                 }
@@ -283,6 +362,8 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
         
         if parsed_path.path == "/suggest-team":
             self._handle_suggest_team()
+        elif parsed_path.path == "/ask-question":
+            self._handle_ask_question()
         else:
             self._set_headers(404)
             self.wfile.write(json.dumps({"error": "Not found"}).encode())
@@ -345,6 +426,55 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             self._set_headers(500)
             self.wfile.write(json.dumps({"error": str(e)}).encode())
     
+    def _handle_ask_question(self):
+        """Handle /ask-question endpoint"""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+
+            if content_length == 0:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({
+                    "error": "Request body required",
+                    "expected": {"question": "string"}
+                }).encode())
+                return
+
+            body = self.rfile.read(content_length)
+
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
+                return
+
+            question = data.get("question")
+            if not question:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({
+                    "error": "Missing required field: question"
+                }).encode())
+                return
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(ask_question_json(question))
+            finally:
+                loop.close()
+
+            if "error" in result and "response" not in result:
+                self._set_headers(500)
+            else:
+                self._set_headers(200)
+
+            self.wfile.write(json.dumps(result, indent=2).encode())
+
+        except Exception as e:
+            logger.error(f"Error handling ask-question: {e}")
+            self._set_headers(500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
     def log_message(self, format, *args):
         """Override to use logging module"""
         logger.info(f"{self.address_string()} - {format % args}")
@@ -352,7 +482,10 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
 
 def run_server(port: int = DEFAULT_PORT):
     """Run the HTTP server"""
-    server_address = ("", port)
+    # Bind explicitly to 127.0.0.1 so the server is reachable on both
+    # IPv4 loopback (127.0.0.1) and the hostname "localhost", regardless of
+    # how the OS resolves "localhost" (some Windows systems prefer ::1/IPv6).
+    server_address = ("127.0.0.1", port)
     httpd = HTTPServer(server_address, MKMobileHTTPHandler)
     
     logger.info(f"Starting MK Mobile HTTP API server on port {port}")

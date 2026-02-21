@@ -173,7 +173,7 @@ async def list_tools():
         # Ollama local LLM tools
         Tool(
             name="ask_ollama",
-            description="Ask the local Ollama AI assistant (llama3.2:3b) any question about MK Mobile. Runs locally on CPU without API costs. Best for privacy-conscious users or offline usage.",
+            description="Ask the local Ollama AI assistant any question about MK Mobile. Runs locally on CPU without API costs. Best for privacy-conscious users or offline usage.",
             inputSchema={
                 "type": "object",
                 "properties": {

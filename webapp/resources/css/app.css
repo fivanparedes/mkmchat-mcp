@@ -1,0 +1,49 @@
+﻿@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+
+    /*  Cards  */
+    .mk-card {
+        @apply bg-mk-card border border-mk-border rounded-lg;
+    }
+
+    /*  Buttons  */
+    .mk-btn-fire {
+        @apply inline-flex items-center px-4 py-2 bg-mk-fire border border-mk-fire text-white rounded-md font-semibold text-xs uppercase tracking-widest hover:bg-mk-fire-light focus:outline-none focus:ring-2 focus:ring-mk-fire focus:ring-offset-2 focus:ring-offset-mk-bg active:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition ease-in-out duration-150;
+    }
+
+    .mk-btn-secondary {
+        @apply inline-flex items-center px-4 py-2 bg-mk-card border border-mk-border text-mk-muted rounded-md font-semibold text-xs uppercase tracking-widest hover:text-mk-fire hover:border-mk-fire focus:outline-none focus:ring-2 focus:ring-mk-fire focus:ring-offset-2 focus:ring-offset-mk-bg disabled:opacity-50 disabled:cursor-not-allowed transition ease-in-out duration-150;
+    }
+
+    .mk-btn-danger {
+        @apply inline-flex items-center px-4 py-2 bg-red-900 border border-red-800 text-white rounded-md font-semibold text-xs uppercase tracking-widest hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-700 focus:ring-offset-2 focus:ring-offset-mk-bg disabled:opacity-50 disabled:cursor-not-allowed transition ease-in-out duration-150;
+    }
+
+    /*  Prose (Markdown content)  */
+    .mk-prose {
+        @apply text-mk-text leading-relaxed;
+    }
+    .mk-prose h1 { @apply text-2xl font-bold text-white mt-6 mb-3; }
+    .mk-prose h2 { @apply text-xl font-semibold text-white mt-5 mb-2 border-b border-mk-border pb-1; }
+    .mk-prose h3 { @apply text-lg font-semibold text-mk-text mt-4 mb-2; }
+    .mk-prose p  { @apply mb-3; }
+    .mk-prose ul { @apply list-disc list-outside pl-5 mb-3 space-y-1; }
+    .mk-prose ol { @apply list-decimal list-outside pl-5 mb-3 space-y-1; }
+    .mk-prose li { @apply text-mk-text; }
+    .mk-prose strong { @apply font-semibold text-white; }
+    .mk-prose em { @apply italic text-mk-fire-light; }
+    .mk-prose code { @apply bg-mk-surface text-mk-fire-light text-sm font-mono px-1.5 py-0.5 rounded; }
+    .mk-prose pre  { @apply bg-black text-gray-300 text-sm font-mono p-4 rounded-lg overflow-x-auto mb-3 border border-mk-border; }
+    .mk-prose pre code { @apply bg-transparent text-inherit p-0; }
+    .mk-prose blockquote { @apply border-l-4 border-mk-fire pl-4 italic text-mk-muted my-3; }
+    .mk-prose hr  { @apply border-mk-border my-4; }
+    .mk-prose a   { @apply text-mk-fire hover:text-mk-fire-light hover:underline; }
+    .mk-prose table { @apply w-full text-sm border-collapse mb-3; }
+    .mk-prose th  { @apply bg-mk-surface font-semibold text-mk-muted px-3 py-2 border border-mk-border text-left; }
+    .mk-prose td  { @apply px-3 py-2 border border-mk-border; }
+}

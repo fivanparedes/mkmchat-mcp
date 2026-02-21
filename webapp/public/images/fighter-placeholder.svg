@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="50" fill="#1e1b4b"/>
+  <!-- Body silhouette -->
+  <ellipse cx="50" cy="72" rx="22" ry="16" fill="#4338ca"/>
+  <!-- Head -->
+  <circle cx="50" cy="38" r="14" fill="#4338ca"/>
+  <!-- Belt detail -->
+  <rect x="34" y="62" width="32" height="5" rx="2" fill="#6366f1"/>
+  <!-- Belt buckle -->
+  <rect x="46" y="63" width="8" height="4" rx="1" fill="#a5b4fc"/>
+  <!-- Eyes -->
+  <ellipse cx="44" cy="37" rx="3" ry="3.5" fill="#e0e7ff"/>
+  <ellipse cx="56" cy="37" rx="3" ry="3.5" fill="#e0e7ff"/>
+  <circle cx="44" cy="37" r="1.5" fill="#312e81"/>
+  <circle cx="56" cy="37" r="1.5" fill="#312e81"/>
+  <!-- Mouth -->
+  <path d="M44 44 Q50 48 56 44" stroke="#c7d2fe" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+</svg>

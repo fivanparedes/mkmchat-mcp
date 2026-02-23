@@ -35,6 +35,21 @@
                 <x-input-error :messages="$errors->get('question')" class="mt-2" />
             </div>
 
+            <div>
+                <x-input-label for="modelSlug" value="LLM Model" />
+                <select
+                    id="modelSlug"
+                    wire:model="modelSlug"
+                    class="mt-1 block w-full rounded-md bg-mk-surface border-mk-border text-mk-text shadow-sm focus:border-mk-fire focus:ring-mk-fire"
+                    @disabled($this->limitReached)
+                >
+                    @foreach($this->availableModels as $m)
+                        <option value="{{ $m->slug }}">{{ $m->name }} ({{ $m->parameter_size ?? $m->slug }})</option>
+                    @endforeach
+                </select>
+                <x-input-error :messages="$errors->get('modelSlug')" class="mt-2" />
+            </div>
+
             @if($errorMessage)
                 <div class="rounded-md bg-red-950 border border-red-800 p-4">
                     <p class="text-sm text-red-400">{{ $errorMessage }}</p>

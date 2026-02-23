@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Models\LlmModel;
 use App\Models\QueryHistory;
 use App\Services\MkmApiService;
 use Illuminate\Support\Facades\Auth;
@@ -12,6 +13,7 @@ use RuntimeException;
 class AskQuestion extends Component
 {
     public string $question = '';
+    public string $modelSlug = '';
     public bool $loading = false;
     public ?string $errorMessage = null;
     public ?string $result = null;
@@ -35,10 +37,23 @@ class AskQuestion extends Component
         return $this->dailyLimit > 0 && $this->todayCount >= $this->dailyLimit;
     }
 
+    #[Computed]
+    public function availableModels()
+    {
+        return LlmModel::active()->orderBy('name')->get();
+    }
+
+    public function mount(): void
+    {
+        $default = LlmModel::active()->first();
+        $this->modelSlug = $default?->slug ?? '';
+    }
+
     public function submit(MkmApiService $apiService): void
     {
         $this->validate([
-            'question' => ['required', 'string', 'min:3', 'max:2000'],
+            'question'  => ['required', 'string', 'min:3', 'max:2000'],
+            'modelSlug' => ['required', 'string'],
         ]);
 
         if ($this->limitReached) {
@@ -57,11 +72,12 @@ class AskQuestion extends Component
             'user_id'    => $user->id,
             'query_type' => 'ask_question',
             'strategy'   => $this->question,
+            'model_slug' => $this->modelSlug,
             'status'     => 'pending',
         ]);
 
         try {
-            $text = $apiService->askQuestion($this->question);
+            $text = $apiService->askQuestion($this->question, $this->modelSlug);
             $history->update(['response' => ['text' => $text], 'status' => 'success']);
             $this->result    = $text;
             $this->historyId = $history->id;

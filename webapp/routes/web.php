@@ -14,4 +14,11 @@ Route::view('profile', 'profile')
     ->middleware(['auth'])
     ->name('profile');
 
+/* ------------------------------------------------------------------ */
+/*  Admin panel                                                        */
+/* ------------------------------------------------------------------ */
+Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.')->group(function () {
+    Route::view('llm-models', 'admin.llm-models')->name('llm-models');
+});
+
 require __DIR__.'/auth.php';

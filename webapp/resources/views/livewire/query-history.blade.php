@@ -12,10 +12,16 @@
                         Team for: <em class="text-mk-fire-light">{{ $viewingStrategy }}</em>
                     @endif
                 </h3>
-                <button wire:click="closeEntry" class="text-sm text-mk-muted hover:text-mk-fire underline transition">
+                <button type="button" wire:click="closeEntry" class="text-sm text-mk-muted hover:text-mk-fire underline transition">
                     &larr; Back to list
                 </button>
             </div>
+
+            @if($viewingModelSlug)
+                <div class="text-xs text-mk-muted">
+                    Model: <span class="font-mono text-mk-text">{{ $viewingModelSlug }}</span>
+                </div>
+            @endif
 
             @if($viewingResult)
                 @php $partial = $this->resultPartial(); @endphp
@@ -45,6 +51,7 @@
                             <th class="px-6 py-3 text-left text-xs font-medium text-mk-muted uppercase tracking-wider">Date</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-mk-muted uppercase tracking-wider">Type</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-mk-muted uppercase tracking-wider">Query</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-mk-muted uppercase tracking-wider">Model</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-mk-muted uppercase tracking-wider">Status</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-mk-muted uppercase tracking-wider">Action</th>
                         </tr>
@@ -64,6 +71,9 @@
                                 </td>
                                 <td class="px-6 py-4 text-sm text-mk-text max-w-xs">
                                     <span class="line-clamp-2">{{ Str::limit($history->strategy, 100) }}</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-xs font-mono text-mk-muted">
+                                    {{ $history->model_slug ?? '—' }}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     @if($history->status === 'success')

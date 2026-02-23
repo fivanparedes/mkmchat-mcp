@@ -15,6 +15,7 @@ class QueryHistoryList extends Component
     public ?array $viewingResult = null;
     public ?string $viewingStrategy = null;
     public ?string $viewingQueryType = null;
+    public ?string $viewingModelSlug = null;
 
     public function viewEntry(int $id): void
     {
@@ -26,6 +27,7 @@ class QueryHistoryList extends Component
         $this->viewingResult    = $history->response;
         $this->viewingStrategy  = $history->strategy;
         $this->viewingQueryType = $history->query_type ?? 'team_suggest';
+        $this->viewingModelSlug = $history->model_slug ?? 'mistral-nemo:12b';
     }
 
     public function closeEntry(): void
@@ -34,6 +36,8 @@ class QueryHistoryList extends Component
         $this->viewingResult    = null;
         $this->viewingStrategy  = null;
         $this->viewingQueryType = null;
+        $this->viewingModelSlug = null;
+        $this->resetPage();
     }
 
     /**

@@ -102,7 +102,8 @@ def build_structured_context(rag, strategy: str) -> Dict[str, str]:
 
 async def suggest_team_json(
     strategy: str,
-    owned_characters: Optional[List[str]] = None
+    owned_characters: Optional[List[str]] = None,
+    model: Optional[str] = None
 ) -> dict:
     """
     Get team composition suggestions as structured JSON
@@ -110,6 +111,7 @@ async def suggest_team_json(
     Args:
         strategy: Desired strategy (e.g., "aggressive rush", "defensive tank")
         owned_characters: Optional list of characters the player owns
+        model: Optional Ollama model tag to use (e.g., "mistral-nemo:12b")
         
     Returns:
         Structured JSON with team suggestion
@@ -122,6 +124,9 @@ async def suggest_team_json(
             return {
                 "error": "Ollama assistant not available. Make sure Ollama is running."
             }
+        
+        # Use the requested model or fall back to the assistant's default
+        use_model = model or assistant.model_name
         
         # Build STRUCTURED context to reduce hallucinations
         context = build_structured_context(rag, strategy)
@@ -185,7 +190,7 @@ Respond with ONLY this JSON structure:
             response = await client.post(
                 f"{assistant.base_url}/api/generate",
                 json={
-                    "model": assistant.model_name,
+                    "model": use_model,
                     "system": system_prompt,
                     "prompt": user_prompt,
                     "stream": False,
@@ -236,7 +241,7 @@ Respond with ONLY this JSON structure:
         return {"error": str(e)}
 
 
-async def ask_question_json(question: str) -> dict:
+async def ask_question_json(question: str, model: Optional[str] = None) -> dict:
     """Answer a free-form question with RAG context, returning Markdown text."""
     try:
         rag = get_rag_system()
@@ -244,6 +249,9 @@ async def ask_question_json(question: str) -> dict:
 
         if not assistant.enabled:
             return {"error": "Ollama assistant not available. Make sure Ollama is running."}
+
+        # Use the requested model or fall back to the assistant's default
+        use_model = model or assistant.model_name
 
         context = build_structured_context(rag, question)
 
@@ -279,7 +287,7 @@ async def ask_question_json(question: str) -> dict:
             response = await client.post(
                 f"{assistant.base_url}/api/generate",
                 json={
-                    "model": assistant.model_name,
+                    "model": use_model,
                     "system": system_prompt,
                     "prompt": question,
                     "stream": False,
@@ -332,26 +340,34 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             self._set_headers(200)
             response = {
                 "service": "MK Mobile Assistant API",
-                "version": "2.1.0",
+                "version": "2.2.0",
                 "endpoints": {
                     "/suggest-team": {
                         "method": "POST",
                         "description": "Get AI-powered team suggestions",
                         "body": {
                             "strategy": "string (required)",
-                            "owned_characters": "array of strings (optional)"
+                            "owned_characters": "array of strings (optional)",
+                            "model": "string (optional, Ollama model tag e.g. 'mistral-nemo:12b')"
                         }
                     },
                     "/ask-question": {
                         "method": "POST",
                         "description": "Ask any question about MK Mobile, returns Markdown text",
                         "body": {
-                            "question": "string (required)"
+                            "question": "string (required)",
+                            "model": "string (optional, Ollama model tag)"
                         }
+                    },
+                    "/health": {
+                        "method": "GET",
+                        "description": "Detailed health / status of RAG system, LLM, and data cache"
                     }
                 }
             }
             self.wfile.write(json.dumps(response, indent=2).encode())
+        elif parsed_path.path == "/health":
+            self._handle_health()
         else:
             self._set_headers(404)
             self.wfile.write(json.dumps({"error": "Not found"}).encode())
@@ -367,6 +383,44 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
         else:
             self._set_headers(404)
             self.wfile.write(json.dumps({"error": "Not found"}).encode())
+
+    # ------------------------------------------------------------------
+    # GET /health
+    # ------------------------------------------------------------------
+
+    def _handle_health(self):
+        """Return detailed health / observability information."""
+        try:
+            rag = get_rag_system()
+            rag_status = rag.get_status() if rag.enabled else {"enabled": False}
+
+            # Check Ollama reachability (quick connect test)
+            from mkmchat.llm.ollama import get_ollama_assistant
+            assistant = get_ollama_assistant(rag_system=rag)
+            llm_status = {
+                "enabled": assistant.enabled,
+                "model": getattr(assistant, "model_name", None),
+                "base_url": getattr(assistant, "base_url", None),
+            }
+
+            # Document-type breakdown
+            doc_breakdown = {}
+            if rag.enabled:
+                for doc in rag.documents:
+                    doc_breakdown[doc.doc_type] = doc_breakdown.get(doc.doc_type, 0) + 1
+
+            health = {
+                "status": "ok" if rag.enabled and assistant.enabled else "degraded",
+                "rag": {**rag_status, "documents_by_type": doc_breakdown},
+                "llm": llm_status,
+            }
+
+            self._set_headers(200)
+            self.wfile.write(json.dumps(health, indent=2).encode())
+        except Exception as e:
+            logger.error(f"Error handling /health: {e}")
+            self._set_headers(500)
+            self.wfile.write(json.dumps({"status": "error", "detail": str(e)}).encode())
     
     def _handle_suggest_team(self):
         """Handle /suggest-team endpoint"""
@@ -401,6 +455,7 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
                 return
             
             owned_characters = data.get("owned_characters")
+            model = data.get("model")  # optional model override
             
             # Run async function
             loop = asyncio.new_event_loop()
@@ -408,7 +463,7 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             
             try:
                 result = loop.run_until_complete(
-                    suggest_team_json(strategy, owned_characters)
+                    suggest_team_json(strategy, owned_characters, model=model)
                 )
             finally:
                 loop.close()
@@ -456,10 +511,12 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
                 }).encode())
                 return
 
+            model = data.get("model")  # optional model override
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                result = loop.run_until_complete(ask_question_json(question))
+                result = loop.run_until_complete(ask_question_json(question, model=model))
             finally:
                 loop.close()
 

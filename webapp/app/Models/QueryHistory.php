@@ -18,6 +18,7 @@ class QueryHistory extends Model
         'response',
         'status',
         'error_message',
+        'model_slug',
     ];
 
     protected $casts = [

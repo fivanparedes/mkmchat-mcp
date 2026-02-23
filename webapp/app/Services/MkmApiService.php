@@ -24,7 +24,7 @@ class MkmApiService
      *
      * @throws RuntimeException  On connection failure or error response from the API.
      */
-    public function suggestTeam(string $strategy, array $ownedCharacters = []): array
+    public function suggestTeam(string $strategy, array $ownedCharacters = [], ?string $model = null): array
     {
         $payload = ['strategy' => $strategy];
 
@@ -32,6 +32,10 @@ class MkmApiService
             $payload['owned_characters'] = array_values(array_filter(
                 array_map('trim', $ownedCharacters)
             ));
+        }
+
+        if ($model) {
+            $payload['model'] = $model;
         }
 
         try {
@@ -67,9 +71,13 @@ class MkmApiService
         return $body['response'];
     }
 
-    public function askQuestion(string $question): string
+    public function askQuestion(string $question, ?string $model = null): string
     {
         $payload = ['question' => $question];
+
+        if ($model) {
+            $payload['model'] = $model;
+        }
 
         try {
             set_time_limit(0);

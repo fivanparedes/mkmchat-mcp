@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Models\LlmModel;
 use App\Models\QueryHistory;
 use App\Services\MkmApiService;
 use Illuminate\Support\Facades\Auth;
@@ -14,6 +15,7 @@ class TeamSuggestion extends Component
     // Form fields
     public string $strategy = '';
     public string $ownedCharacters = '';
+    public string $modelSlug = '';
 
     // UI state
     public bool $loading = false;
@@ -41,11 +43,24 @@ class TeamSuggestion extends Component
         return $this->dailyLimit > 0 && $this->todayCount >= $this->dailyLimit;
     }
 
+    #[Computed]
+    public function availableModels()
+    {
+        return LlmModel::active()->orderBy('name')->get();
+    }
+
+    public function mount(): void
+    {
+        $default = LlmModel::active()->first();
+        $this->modelSlug = $default?->slug ?? '';
+    }
+
     public function submit(MkmApiService $apiService): void
     {
         $this->validate([
             'strategy'        => ['required', 'string', 'min:3', 'max:2000'],
             'ownedCharacters' => ['nullable', 'string', 'max:1000'],
+            'modelSlug'       => ['required', 'string'],
         ]);
 
         if ($this->limitReached) {
@@ -73,11 +88,12 @@ class TeamSuggestion extends Component
             'query_type'       => 'team_suggest',
             'strategy'         => $this->strategy,
             'owned_characters' => $owned,
+            'model_slug'       => $this->modelSlug,
             'status'           => 'pending',
         ]);
 
         try {
-            $response = $apiService->suggestTeam($this->strategy, $owned);
+            $response = $apiService->suggestTeam($this->strategy, $owned, $this->modelSlug);
 
             $history->update([
                 'response' => $response,

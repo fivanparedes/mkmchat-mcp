@@ -74,6 +74,7 @@ class RAGSystem:
         
         self.documents: List[Document] = []
         self.embeddings: Optional[np.ndarray] = None
+        self._last_data_hash: Optional[str] = None  # tracks hash after last index
         
     def _get_cache_hash(self) -> str:
         """Generate hash of data files for cache validation"""
@@ -162,7 +163,11 @@ class RAGSystem:
             
             # Save to cache
             self._save_cache()
-        else:
+        
+        # Remember the hash of the data we just indexed
+        self._last_data_hash = self._get_cache_hash()
+        
+        if not self.documents:
             logger.warning("No documents found to index")
     
     def _index_characters(self):
@@ -475,3 +480,39 @@ class RAGSystem:
     def search_glossary(self, query: str, top_k: int = 3) -> List[Tuple[Document, float]]:
         """Search for glossary terms matching the query"""
         return self.search(query, top_k=top_k, doc_type='glossary')
+
+    # ------------------------------------------------------------------
+    # Runtime cache-invalidation helpers
+    # ------------------------------------------------------------------
+
+    def is_stale(self) -> bool:
+        """Return True if the data files have changed since the last index."""
+        if not self.enabled or self._last_data_hash is None:
+            return False
+        return self._get_cache_hash() != self._last_data_hash
+
+    def check_and_reindex(self) -> bool:
+        """Re-index data if the underlying files changed.  Returns True if a rebuild happened."""
+        if self.is_stale():
+            logger.info("Data files changed since last index — rebuilding…")
+            self.index_data(force_rebuild=True)
+            return True
+        return False
+
+    def get_status(self) -> Dict:
+        """Return a status dict useful for health / observability endpoints."""
+        import datetime
+
+        cache_file = self.cache_dir / "embeddings.pkl" if self.enabled else None
+        cache_age = None
+        if cache_file and cache_file.exists():
+            mtime = cache_file.stat().st_mtime
+            cache_age = str(datetime.datetime.fromtimestamp(mtime))
+
+        return {
+            "enabled": self.enabled,
+            "document_count": len(self.documents) if self.enabled else 0,
+            "cache_dir": str(self.cache_dir) if self.enabled else None,
+            "cache_last_built": cache_age,
+            "data_stale": self.is_stale() if self.enabled else False,
+        }

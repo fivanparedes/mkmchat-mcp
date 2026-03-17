@@ -47,6 +47,24 @@ Thumbs.db
 # MCP
 *.log
 
+# Docker / local overrides
+docker-compose.override.yml
+.env
+.env.local
+.env.*.local
+.env.docker
+.env.docker.local
+webapp/.env.docker.local
+webapp/.env.docker
+!.env.docker.example
+!webapp/.env.docker.example
+
+# Sensitive local credentials
+*.pem
+*.p12
+*.pfx
+*.crt
+
 # Data (is in another repo)
 data/
 
@@ -78,6 +96,7 @@ webapp/storage/framework/cache/
 webapp/storage/framework/sessions/
 webapp/storage/framework/views/
 webapp/storage/logs/
+webapp/storage/pail/
 
 # Testing
 webapp/.phpunit.result.cache

@@ -124,6 +124,48 @@ Open [http://localhost:8000](http://localhost:8000) in your browser, register an
 > **Both servers must be running at the same time.**  
 > The Laravel app calls the Python server at the URL configured in `MKM_API_URL` (defaults to `http://localhost:8080`).
 
+### 3. Docker (Python + Laravel + Ollama)
+
+```bash
+# From repo root
+docker compose up --build
+```
+
+Docker Compose reads service env files by default:
+- Root Python API envs: `.env.docker`
+- Laravel envs: `webapp/.env.docker`
+
+Create them from templates before first run:
+
+```bash
+cp .env.docker.example .env.docker
+cp webapp/.env.docker.example webapp/.env.docker
+```
+
+Edit those files to override container runtime values (API URLs, app env, limits, etc.).
+
+Services:
+- Laravel webapp: `http://localhost:8000`
+- Python HTTP API: `http://localhost:8080`
+- Ollama API: `http://localhost:11434`
+
+On first run, pull at least one model inside the Ollama container:
+
+```bash
+docker compose exec ollama ollama pull llama3.2:3b
+```
+
+The Python container defaults to HTTP mode. To run MCP mode on-demand from the same image:
+
+```bash
+docker compose run --rm python-api python -m mkmchat
+```
+
+Persistent volumes are enabled for:
+- Ollama model cache
+- Laravel `storage/`
+- Laravel `database/` (SQLite file)
+
 ---
 
 ## Environment Variables

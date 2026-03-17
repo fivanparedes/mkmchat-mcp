@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, List, Dict
@@ -539,14 +540,12 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
 
 def run_server(port: int = DEFAULT_PORT):
     """Run the HTTP server"""
-    # Bind explicitly to 127.0.0.1 so the server is reachable on both
-    # IPv4 loopback (127.0.0.1) and the hostname "localhost", regardless of
-    # how the OS resolves "localhost" (some Windows systems prefer ::1/IPv6).
-    server_address = ("127.0.0.1", port)
+    host = os.getenv("MKM_HTTP_HOST", "127.0.0.1")
+    server_address = (host, port)
     httpd = HTTPServer(server_address, MKMobileHTTPHandler)
     
-    logger.info(f"Starting MK Mobile HTTP API server on port {port}")
-    logger.info(f"API endpoint: http://localhost:{port}/suggest-team")
+    logger.info(f"Starting MK Mobile HTTP API server on {host}:{port}")
+    logger.info(f"API endpoint: http://{host}:{port}/suggest-team")
     logger.info("Press Ctrl+C to stop")
     
     try:

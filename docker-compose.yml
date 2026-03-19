@@ -1,6 +1,13 @@
 services:
   ollama:
-    image: ollama/ollama:latest
+    build:
+      context: .
+      dockerfile: docker/ollama/Dockerfile
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-15m}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
     ports:
       - "11434:11434"
     volumes:
@@ -31,9 +38,9 @@ services:
       APP_DEBUG: ${APP_DEBUG:-true}
       APP_URL: ${APP_URL:-http://localhost:8000}
       DB_CONNECTION: ${DB_CONNECTION:-sqlite}
-      MKM_API_URL: ${MKM_API_URL:-http://python-api:8080}
+      MKM_API_URL: http://python-api:8080
       MKM_DAILY_LIMIT: ${MKM_DAILY_LIMIT:-0}
-      APP_KEY: ${APP_KEY:-}
+      MKM_WEB_RATE_LIMIT_PER_MINUTE: ${MKM_WEB_RATE_LIMIT_PER_MINUTE:-10}
     ports:
       - "8000:8000"
     depends_on:

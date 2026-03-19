@@ -3,6 +3,7 @@
 namespace App\Livewire\Admin;
 
 use App\Models\LlmModel;
+use Illuminate\Support\Facades\Gate;
 use Livewire\Component;
 use Livewire\WithPagination;
 
@@ -44,12 +45,14 @@ class LlmModels extends Component
 
     public function openCreate(): void
     {
+        Gate::authorize('manage-llm-models');
         $this->resetForm();
         $this->showForm = true;
     }
 
     public function openEdit(int $id): void
     {
+        Gate::authorize('manage-llm-models');
         $model = LlmModel::findOrFail($id);
 
         $this->editingId     = $model->id;
@@ -64,6 +67,8 @@ class LlmModels extends Component
 
     public function save(): void
     {
+        Gate::authorize('manage-llm-models');
+
         $rules = [
             'name'          => ['required', 'string', 'max:255'],
             'slug'          => ['required', 'string', 'max:255', 'unique:llm_models,slug,' . ($this->editingId ?? 'NULL')],
@@ -97,12 +102,15 @@ class LlmModels extends Component
 
     public function confirmDelete(int $id): void
     {
+        Gate::authorize('manage-llm-models');
         $this->confirmingDelete = true;
         $this->deletingId       = $id;
     }
 
     public function delete(): void
     {
+        Gate::authorize('manage-llm-models');
+
         if ($this->deletingId) {
             LlmModel::findOrFail($this->deletingId)->delete();
             session()->flash('status', 'Model deleted.');
@@ -120,6 +128,7 @@ class LlmModels extends Component
 
     public function toggleActive(int $id): void
     {
+        Gate::authorize('manage-llm-models');
         $model = LlmModel::findOrFail($id);
         $model->update(['is_active' => ! $model->is_active]);
     }

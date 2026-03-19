@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('query_histories', function (Blueprint $table) {
-            $table->string('model_slug')->default('mistral-nemo:12b');
+            $table->string('model_slug')->default('llama3.2:3b');
         });
     }
 

@@ -1,10 +1,13 @@
 """HTTP Server for MK Mobile Assistant API"""
 
 import asyncio
+import hmac
 import json
 import logging
 import os
+from collections import defaultdict, deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from time import monotonic
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, List, Dict
 
@@ -17,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 # Default port
 DEFAULT_PORT = 8080
+
+_IP_REQUESTS = defaultdict(deque)
+_IP_BURST_REQUESTS = defaultdict(deque)
 
 
 def build_structured_context(rag, strategy: str) -> Dict[str, str]:
@@ -36,14 +42,17 @@ def build_structured_context(rag, strategy: str) -> Dict[str, str]:
         "glossary": "",
         "gameplay": ""
     }
+
+    package_dir = Path(__file__).resolve().parent
+    data_dir = package_dir / "data"
     
     # Load glossary from file
-    glossary_file = Path(__file__).parent.parent / "data" / "glossary.txt"
+    glossary_file = data_dir / "glossary.txt"
     if glossary_file.exists():
         context["glossary"] = glossary_file.read_text(encoding='utf-8').strip()
     
     # Load gameplay from file
-    gameplay_file = Path(__file__).parent.parent / "data" / "gameplay.txt"
+    gameplay_file = data_dir / "gameplay.txt"
     if gameplay_file.exists():
         context["gameplay"] = gameplay_file.read_text(encoding='utf-8').strip()
     
@@ -112,7 +121,7 @@ async def suggest_team_json(
     Args:
         strategy: Desired strategy (e.g., "aggressive rush", "defensive tank")
         owned_characters: Optional list of characters the player owns
-        model: Optional Ollama model tag to use (e.g., "mistral-nemo:12b")
+        model: Optional Ollama model tag to use (e.g., "llama3.2:3b")
         
     Returns:
         Structured JSON with team suggestion
@@ -179,7 +188,7 @@ Respond with ONLY this JSON structure:
 
         # Log prompt and context to file (overwrite each call)
         from pathlib import Path
-        log_file = Path(__file__).parent.parent / "prompt_debug.log"
+        log_file = Path(__file__).resolve().parent / "prompt_debug.log"
         with open(log_file, 'w', encoding='utf-8') as f:
             f.write(f"=== SYSTEM PROMPT ===\n{system_prompt}\n\n")
             f.write(f"=== USER PROMPT ===\n{user_prompt}\n")
@@ -323,10 +332,103 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
     def _set_headers(self, status_code: int = 200, content_type: str = "application/json"):
         self.send_response(status_code)
         self.send_header("Content-Type", content_type)
-        self.send_header("Access-Control-Allow-Origin", "*")
+
+        origin = self.headers.get("Origin", "")
+        configured_origins = os.getenv("MKM_CORS_ORIGINS", "*").strip()
+        if not configured_origins or configured_origins == "*":
+            allow_origin = "*"
+        else:
+            allowed = [item.strip() for item in configured_origins.split(",") if item.strip()]
+            allow_origin = origin if origin in allowed else (allowed[0] if allowed else "*")
+
+        api_key_header = os.getenv("MKM_API_KEY_HEADER", "X-API-Key")
+
+        self.send_header("Access-Control-Allow-Origin", allow_origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", f"Content-Type, {api_key_header}")
         self.end_headers()
+
+    @staticmethod
+    def _get_int_env(name: str, default: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+            return value if value > 0 else default
+        except ValueError:
+            return default
+
+    def _client_ip(self) -> str:
+        return self.client_address[0] if self.client_address else "unknown"
+
+    def _check_api_auth(self) -> bool:
+        expected_key = os.getenv("MKM_API_KEY", "").strip()
+        if not expected_key:
+            return True
+
+        header_name = os.getenv("MKM_API_KEY_HEADER", "X-API-Key")
+        provided_key = self.headers.get(header_name, "")
+
+        if not provided_key or not hmac.compare_digest(provided_key, expected_key):
+            logger.warning("Unauthorized API request from %s", self._client_ip())
+            self._set_headers(401)
+            self.wfile.write(json.dumps({"error": "Unauthorized"}).encode())
+            return False
+
+        return True
+
+    def _check_rate_limit(self) -> bool:
+        enabled = os.getenv("MKM_RATE_LIMIT_ENABLED", "true").lower() == "true"
+        if not enabled:
+            return True
+
+        per_minute_limit = self._get_int_env("MKM_RATE_LIMIT_PER_MINUTE", 20)
+        burst_limit = self._get_int_env("MKM_RATE_LIMIT_BURST", 5)
+        burst_window = self._get_int_env("MKM_RATE_LIMIT_BURST_WINDOW_SECONDS", 10)
+
+        now = monotonic()
+        ip = self._client_ip()
+
+        minute_queue = _IP_REQUESTS[ip]
+        while minute_queue and now - minute_queue[0] > 60:
+            minute_queue.popleft()
+
+        burst_queue = _IP_BURST_REQUESTS[ip]
+        while burst_queue and now - burst_queue[0] > burst_window:
+            burst_queue.popleft()
+
+        if len(minute_queue) >= per_minute_limit or len(burst_queue) >= burst_limit:
+            logger.warning("Rate limit exceeded for %s", ip)
+            self._set_headers(429)
+            self.wfile.write(json.dumps({"error": "Too many requests"}).encode())
+            return False
+
+        minute_queue.append(now)
+        burst_queue.append(now)
+        return True
+
+    def _read_json_body(self, expected_payload: dict) -> Optional[dict]:
+        content_length = int(self.headers.get("Content-Length", 0))
+
+        if content_length == 0:
+            self._set_headers(400)
+            self.wfile.write(json.dumps({
+                "error": "Request body required",
+                "expected": expected_payload,
+            }).encode())
+            return None
+
+        max_request_size = self._get_int_env("MKM_MAX_REQUEST_SIZE", 1048576)
+        if content_length > max_request_size:
+            self._set_headers(413)
+            self.wfile.write(json.dumps({"error": "Request body too large"}).encode())
+            return None
+
+        body = self.rfile.read(content_length)
+        try:
+            return json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            self._set_headers(400)
+            self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
+            return None
     
     def do_OPTIONS(self):
         """Handle CORS preflight requests"""
@@ -349,7 +451,7 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
                         "body": {
                             "strategy": "string (required)",
                             "owned_characters": "array of strings (optional)",
-                            "model": "string (optional, Ollama model tag e.g. 'mistral-nemo:12b')"
+                            "model": "string (optional, Ollama model tag e.g. 'llama3.2:3b')"
                         }
                     },
                     "/ask-question": {
@@ -376,6 +478,12 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests"""
         parsed_path = urlparse(self.path)
+
+        if not self._check_rate_limit():
+            return
+
+        if not self._check_api_auth():
+            return
         
         if parsed_path.path == "/suggest-team":
             self._handle_suggest_team()
@@ -426,36 +534,34 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
     def _handle_suggest_team(self):
         """Handle /suggest-team endpoint"""
         try:
-            # Read request body
-            content_length = int(self.headers.get("Content-Length", 0))
-            
-            if content_length == 0:
-                self._set_headers(400)
-                self.wfile.write(json.dumps({
-                    "error": "Request body required",
-                    "expected": {"strategy": "string", "owned_characters": ["optional", "array"]}
-                }).encode())
-                return
-            
-            body = self.rfile.read(content_length)
-            
-            try:
-                data = json.loads(body.decode("utf-8"))
-            except json.JSONDecodeError:
-                self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
+            data = self._read_json_body({"strategy": "string", "owned_characters": ["optional", "array"]})
+            if data is None:
                 return
             
             # Validate required fields
             strategy = data.get("strategy")
-            if not strategy:
+            if not isinstance(strategy, str) or not strategy.strip():
                 self._set_headers(400)
                 self.wfile.write(json.dumps({
                     "error": "Missing required field: strategy"
                 }).encode())
                 return
+
+            max_strategy_length = self._get_int_env("MKM_MAX_STRATEGY_LENGTH", 2000)
+            if len(strategy) > max_strategy_length:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({
+                    "error": f"Strategy exceeds {max_strategy_length} characters"
+                }).encode())
+                return
             
             owned_characters = data.get("owned_characters")
+            if owned_characters is not None and not isinstance(owned_characters, list):
+                self._set_headers(400)
+                self.wfile.write(json.dumps({
+                    "error": "owned_characters must be an array of strings"
+                }).encode())
+                return
             model = data.get("model")  # optional model override
             
             # Run async function
@@ -485,30 +591,23 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
     def _handle_ask_question(self):
         """Handle /ask-question endpoint"""
         try:
-            content_length = int(self.headers.get("Content-Length", 0))
-
-            if content_length == 0:
-                self._set_headers(400)
-                self.wfile.write(json.dumps({
-                    "error": "Request body required",
-                    "expected": {"question": "string"}
-                }).encode())
-                return
-
-            body = self.rfile.read(content_length)
-
-            try:
-                data = json.loads(body.decode("utf-8"))
-            except json.JSONDecodeError:
-                self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
+            data = self._read_json_body({"question": "string"})
+            if data is None:
                 return
 
             question = data.get("question")
-            if not question:
+            if not isinstance(question, str) or not question.strip():
                 self._set_headers(400)
                 self.wfile.write(json.dumps({
                     "error": "Missing required field: question"
+                }).encode())
+                return
+
+            max_question_length = self._get_int_env("MKM_MAX_QUESTION_LENGTH", 2000)
+            if len(question) > max_question_length:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({
+                    "error": f"Question exceeds {max_question_length} characters"
                 }).encode())
                 return
 

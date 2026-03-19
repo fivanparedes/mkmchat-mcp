@@ -27,7 +27,7 @@ class QueryHistoryList extends Component
         $this->viewingResult    = $history->response;
         $this->viewingStrategy  = $history->strategy;
         $this->viewingQueryType = $history->query_type ?? 'team_suggest';
-        $this->viewingModelSlug = $history->model_slug ?? 'mistral-nemo:12b';
+        $this->viewingModelSlug = $history->model_slug ?? 'llama3.2:3b';
     }
 
     public function closeEntry(): void

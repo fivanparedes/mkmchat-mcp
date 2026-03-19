@@ -61,7 +61,7 @@ class RAGSystem:
         self.enabled = True
         
         if data_dir is None:
-            self.data_dir = Path(__file__).parent.parent.parent / "data"
+            self.data_dir = Path(__file__).resolve().parent
         else:
             self.data_dir = Path(data_dir)
         

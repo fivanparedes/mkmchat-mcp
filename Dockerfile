@@ -10,6 +10,8 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY mkmchat ./mkmchat
 
+RUN ln -s /app/mkmchat/data /app/data
+
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e .
 

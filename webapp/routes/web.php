@@ -4,20 +4,17 @@ use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'welcome');
 
-Route::middleware(['auth', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified', 'throttle:ai-actions'])->group(function () {
     Route::view('dashboard', 'dashboard')->name('dashboard');
     Route::view('history', 'history')->name('history');
     Route::view('ask', 'ask')->name('ask');
+    Route::view('profile', 'profile')->name('profile');
 });
-
-Route::view('profile', 'profile')
-    ->middleware(['auth'])
-    ->name('profile');
 
 /* ------------------------------------------------------------------ */
 /*  Admin panel                                                        */
 /* ------------------------------------------------------------------ */
-Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.')->group(function () {
+Route::middleware(['auth', 'verified', 'admin', 'throttle:ai-actions'])->prefix('admin')->name('admin.')->group(function () {
     Route::view('llm-models', 'admin.llm-models')->name('llm-models');
 });
 

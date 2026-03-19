@@ -21,6 +21,18 @@ MKMChat is a full-stack application combining a Python AI backend (RAG + local L
 
 ---
 
+## Current Status
+
+- Python API + Laravel webapp running in Docker Compose
+- Default LLM fallback set to `llama3.2:3b`
+- Ollama container auto-pulls default model on startup
+- Cross-service API key auth enabled (Laravel -> Python API)
+- Rate limiting enabled in Python API and Laravel web layer
+- RAG cache path and package data paths stabilized for containers
+- Team suggestion, ask-question, and query history flows operational
+
+---
+
 ## Architecture
 
 ```
@@ -124,41 +136,53 @@ Open [http://localhost:8000](http://localhost:8000) in your browser, register an
 > **Both servers must be running at the same time.**  
 > The Laravel app calls the Python server at the URL configured in `MKM_API_URL` (defaults to `http://localhost:8080`).
 
-### 3. Docker (Python + Laravel + Ollama)
+### 3. Docker (recommended)
 
 ```bash
-# From repo root
-docker compose up --build
-```
-
-Docker Compose reads service env files by default:
-- Root Python API envs: `.env.docker`
-- Laravel envs: `webapp/.env.docker`
-
-Create them from templates before first run:
-
-```bash
+# From repo root (first time)
 cp .env.docker.example .env.docker
 cp webapp/.env.docker.example webapp/.env.docker
 ```
 
-Edit those files to override container runtime values (API URLs, app env, limits, etc.).
+Set these values before first run:
+- `MKM_API_KEY` and `MKM_API_KEY_HEADER` (same values in both env files)
+- `OLLAMA_MODEL=llama3.2:3b` (or your preferred model)
+- Keep `APP_KEY=` empty in docker env unless you intentionally provide a fixed Laravel key
 
-Services:
+Start services:
+
+```bash
+docker-compose up -d --build
+```
+
+Expected endpoints:
 - Laravel webapp: `http://localhost:8000`
 - Python HTTP API: `http://localhost:8080`
 - Ollama API: `http://localhost:11434`
 
-On first run, pull at least one model inside the Ollama container:
+Useful checks:
 
 ```bash
-docker compose exec ollama ollama pull llama3.2:3b
+docker-compose ps
+docker-compose exec -T ollama ollama list
+docker-compose logs -f python-api
 ```
 
-The Python container defaults to HTTP mode. To run MCP mode on-demand from the same image:
+Notes:
+- First startup can take longer while sentence-transformer files are downloaded and RAG cache is created.
+- Ollama model pull is automatic through the custom image startup script.
+- If you change env files, recreate affected services (`docker-compose up -d --build --force-recreate webapp python-api`).
+
+Stop and remove containers:
 
 ```bash
-docker compose run --rm python-api python -m mkmchat
+docker-compose down
+```
+
+Run Python container in MCP mode on-demand:
+
+```bash
+docker-compose run --rm python-api python -m mkmchat
 ```
 
 Persistent volumes are enabled for:
@@ -168,16 +192,21 @@ Persistent volumes are enabled for:
 
 ---
 
-## Environment Variables
+## Environment Variables (Docker)
 
-The following variables can be set in `webapp/.env`:
+Core variables used by current Docker setup:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MKM_API_URL` | `http://localhost:8080` | URL of the Python HTTP server |
-| `MKM_DAILY_LIMIT` | `0` | Max queries per user per day (0 = unlimited) |
-| `DB_CONNECTION` | `sqlite` | Database driver (sqlite works out of the box) |
-| `APP_URL` | `http://localhost` | Public URL of the Laravel app |
+| Variable | Example | Used by | Description |
+|----------|---------|---------|-------------|
+| `OLLAMA_MODEL` | `llama3.2:3b` | ollama, python-api | Default model to auto-pull and use as fallback |
+| `MKM_API_KEY` | `change-me-in-production` | webapp, python-api | Shared API key for Laravel -> Python requests |
+| `MKM_API_KEY_HEADER` | `X-API-Key` | webapp, python-api | Header name for API key auth |
+| `MKM_API_URL` | `http://python-api:8080` | webapp | Internal Docker URL for Python API |
+| `MKM_DAILY_LIMIT` | `0` | webapp | Per-user daily limit (0 = unlimited) |
+| `MKM_WEB_RATE_LIMIT_PER_MINUTE` | `10` | webapp | Laravel-side per-minute limiter |
+| `MKM_RATE_LIMIT_PER_MINUTE` | `20` | python-api | Python API per-minute limiter |
+| `MKM_RATE_LIMIT_BURST` | `5` | python-api | Python API burst limiter |
+| `APP_KEY` | *(empty or base64 key)* | webapp | Laravel app key; leave empty for auto-generation on first boot |
 
 ---
 
@@ -185,14 +214,19 @@ The following variables can be set in `webapp/.env`:
 
 Both endpoints accept JSON and return JSON.
 
+When API key auth is enabled, include the configured header:
+- Header: `X-API-Key`
+- Value: `MKM_API_KEY`
+
 ### `POST /suggest-team`
 
 ```bash
 curl -X POST http://localhost:8080/suggest-team \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: change-me-in-production" \
   -d '{
     "strategy": "Best team for Elder Wind Tower",
-    "owned_characters": "Scorpion, Sub-Zero"
+    "owned_characters": ["Scorpion", "Sub-Zero"]
   }'
 ```
 
@@ -222,6 +256,7 @@ Response:
 ```bash
 curl -X POST http://localhost:8080/ask-question \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: change-me-in-production" \
   -d '{"question": "How does X-Ray work in tower challenges?"}'
 ```
 
@@ -244,20 +279,18 @@ mkmchat-mcp/
     data/
        loader.py         # TSV/TXT data loader
        rag.py            # RAG system with tier boosting
+       characters.tsv     # 185+ fighters (name, class, rarity, tier)
+       passives.tsv       # Character passive abilities
+       abilities.tsv      # Special attacks
+       equipment_basic.tsv # Basic equipment
+       equipment_krypt.tsv # Krypt equipment
+       equipment_towers.tsv # Tower-specific equipment
+       glossary.txt       # Game terminology
+       gameplay.txt       # Game mechanics guide
     llm/
        ollama.py         # Ollama LLM integration
     models/               # Pydantic models (Character, Equipment, Team)
     tools/                # MCP / HTTP tool implementations
-
- data/                     # Knowledge base (TSV + TXT files)
-    characters.tsv        # 185+ fighters (name, class, rarity, tier)
-    passives.tsv          # Character passive abilities
-    abilities.tsv         # Special attacks
-    equipment_basic.tsv   # Basic equipment
-    equipment_krypt.tsv   # Krypt equipment
-    equipment_towers.tsv  # Tower-specific equipment
-    glossary.txt          # Game terminology
-    gameplay.txt          # Game mechanics guide
 
  webapp/                   # Laravel 12 web application
     app/
@@ -280,7 +313,7 @@ mkmchat-mcp/
     database/
        migrations/       # users, query_histories tables
     config/
-       mkm.php           # MKM_API_URL and MKM_DAILY_LIMIT config
+      mkm.php           # MKM API URL/auth/limits config
     tailwind.config.js    # Custom MK color palette
 
  tests/                    # Python tests
@@ -295,9 +328,9 @@ mkmchat-mcp/
 ```bash
 # Clear RAG embedding cache (force re-index)
 # Windows
-Remove-Item -Recurse -Force data\.rag_cache
+Remove-Item -Recurse -Force mkmchat\data\.rag_cache
 # Linux/Mac
-rm -rf data/.rag_cache
+rm -rf mkmchat/data/.rag_cache
 
 # Clear Laravel view cache after template edits
 cd webapp && php artisan view:clear
@@ -314,26 +347,41 @@ cd webapp && php artisan test
 
 ---
 
-## Project Status
+## Troubleshooting (Docker)
 
-| Component | Status |
-|-----------|--------|
-| Knowledge base (185+ chars, 280+ items) |  Complete |
-| RAG system with tier boosting |  Complete |
-| Ollama LLM integration |  Complete |
-| HTTP server (`/suggest-team`) |  Complete |
-| HTTP server (`/ask-question`) |  Complete |
-| MCP server (tool mode) |  Complete |
-| Laravel webapp  auth (register/login) |  Complete |
-| Laravel webapp  Team Suggestion UI |  Complete |
-| Laravel webapp  Ask a Question UI |  Complete |
-| Laravel webapp  Query History |  Complete |
-| Laravel webapp  User Profile & Avatar |  Complete |
-| Laravel webapp  Daily query limits |  Complete |
-| MK-themed dark UI |  Complete |
-| Data expansion (more characters/equipment) |  Ongoing |
-| Multiple LLM backend support |  Planned |
-| Team comparison / meta analysis |  Planned |
+### Unauthorized from webapp to Python API
+
+1. Ensure `MKM_API_KEY` and `MKM_API_KEY_HEADER` match in both `.env.docker` and `webapp/.env.docker`.
+2. Recreate containers after env changes:
+
+```bash
+docker-compose up -d --build --force-recreate webapp python-api
+```
+
+3. Verify runtime values:
+
+```bash
+docker-compose exec -T webapp sh -lc 'printenv | grep -E "^MKM_API_KEY=|^MKM_API_KEY_HEADER=|^MKM_API_URL="'
+docker-compose exec -T python-api sh -lc 'printenv | grep -E "^MKM_API_KEY=|^MKM_API_KEY_HEADER="'
+```
+
+### Slow first response after restart
+
+- Normal on cold start while embeddings/model artifacts are initialized.
+- Keep containers running for better response times (`OLLAMA_KEEP_ALIVE=15m` is already configured).
+
+---
+
+## Roadmap Snapshot
+
+| Area | Status |
+|------|--------|
+| Core data + RAG + team/ask endpoints | Stable |
+| Dockerized full stack (webapp + api + ollama) | Stable |
+| Security baseline (auth, route protection, rate limits) | Implemented |
+| Model management/admin UX | Implemented |
+| Data expansion (new characters/equipment updates) | Ongoing |
+| Additional LLM backend providers | Planned |
 
 ---
 

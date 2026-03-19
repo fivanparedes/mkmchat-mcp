@@ -23,7 +23,7 @@ class OllamaAssistant:
     
     def __init__(
         self,
-        model_name: str = "llama3.2:3b",
+        model_name: Optional[str] = None,
         base_url: Optional[str] = None,
         data_loader: Optional[DataLoader] = None,
         rag_system: Optional[RAGSystem] = None
@@ -43,7 +43,7 @@ class OllamaAssistant:
             return
         
         self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "llama3.2:3b")
         self.data_loader = data_loader or DataLoader()
         self.rag_system = rag_system
         
@@ -437,5 +437,5 @@ def get_ollama_assistant(
     """Get or create Ollama assistant singleton"""
     global _ollama_assistant
     if _ollama_assistant is None:
-        _ollama_assistant = OllamaAssistant(rag_system=rag_system, model_name='mistral-nemo:12b')
+        _ollama_assistant = OllamaAssistant(rag_system=rag_system)
     return _ollama_assistant

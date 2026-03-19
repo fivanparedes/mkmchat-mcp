@@ -4,8 +4,11 @@ namespace App\Livewire;
 
 use App\Models\LlmModel;
 use App\Models\QueryHistory;
+use App\Models\User;
 use App\Services\MkmApiService;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Livewire\Attributes\Computed;
 use Livewire\Component;
 use RuntimeException;
@@ -45,12 +48,16 @@ class AskQuestion extends Component
 
     public function mount(): void
     {
-        $default = LlmModel::active()->first();
+        $default = LlmModel::active()
+            ->where('slug', 'llama3.2:3b')
+            ->first() ?? LlmModel::active()->first();
         $this->modelSlug = $default?->slug ?? '';
     }
 
     public function submit(MkmApiService $apiService): void
     {
+        Gate::authorize('ask-question');
+
         $this->validate([
             'question'  => ['required', 'string', 'min:3', 'max:2000'],
             'modelSlug' => ['required', 'string'],
@@ -67,6 +74,15 @@ class AskQuestion extends Component
 
         /** @var \App\Models\User $user */
         $user = Auth::user();
+
+        $maxAttempts = max(1, (int) config('mkm.web_rate_limit_per_minute', 10));
+        $rateLimitKey = $this->rateLimitKey($user);
+        if (RateLimiter::tooManyAttempts($rateLimitKey, $maxAttempts)) {
+            $remainingSeconds = RateLimiter::availableIn($rateLimitKey);
+            $this->errorMessage = "Too many requests. Try again in {$remainingSeconds} seconds.";
+            return;
+        }
+        RateLimiter::hit($rateLimitKey, 60);
 
         $history = QueryHistory::create([
             'user_id'    => $user->id,
@@ -93,5 +109,11 @@ class AskQuestion extends Component
     public function render()
     {
         return view('livewire.ask-question');
+    }
+
+    private function rateLimitKey(User $user): string
+    {
+        $ip = request()->ip() ?? 'unknown';
+        return "ask-question:{$user->id}:{$ip}";
     }
 }

@@ -14,8 +14,8 @@ class DataLoader:
     
     def __init__(self, data_dir: Optional[Path] = None):
         if data_dir is None:
-            # Default to data/ directory at project root
-            self.data_dir = Path(__file__).parent.parent.parent / "data"
+            # Default to package data/ directory
+            self.data_dir = Path(__file__).resolve().parent
         else:
             self.data_dir = Path(data_dir)
             

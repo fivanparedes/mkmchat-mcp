@@ -111,3 +111,5 @@ webapp/.php-cs-fixer.cache
 webapp/Homestead.json
 webapp/Homestead.yaml
 webapp/auth.json
+
+.github/

@@ -164,13 +164,15 @@ async def suggest_team_ollama(
 
 
 async def explain_mechanic_ollama(
-    mechanic: str
+    mechanic: str,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get detailed Ollama explanation of a game mechanic
     
     Args:
         mechanic: Game mechanic to explain
+        model: Optional model override
         
     Returns:
         MCP response with explanation
@@ -189,7 +191,7 @@ async def explain_mechanic_ollama(
                 ]
             }
         
-        result = await assistant.explain_mechanic(mechanic)
+        result = await assistant.explain_mechanic(mechanic, model=model)
 
         if isinstance(result, dict) and result.get("error"):
             err = result["error"]

@@ -338,23 +338,24 @@ async def explain_mechanic_json(mechanic: str, model: Optional[str] = None) -> d
         result = await assistant.explain_mechanic(mechanic, model=model)
 
         if isinstance(result, dict) and result.get("error"):
-            err: dict = {"error": result["error"]}
-            if result.get("raw_response") is not None:
-                err["raw_response"] = result["raw_response"]
-            return err
+            raw = result.get("raw_response")
+            if raw is not None:
+                preview = str(raw).replace("\n", " ")[:300]
+                logger.warning("explain_mechanic_json: parse failure raw preview=%s", preview)
+            return {"error": str(result["error"])}
 
         if not isinstance(result, dict):
             return {"error": "Unexpected response from explain_mechanic"}
 
-        definition = result.get("definition", "")
-        recommendations = result.get("recommendations", "")
-        if not str(definition).strip() and not str(recommendations).strip():
+        definition = str(result.get("definition", "")).strip()
+        recommendations = str(result.get("recommendations", "")).strip()
+        if not definition and not recommendations:
             return {"error": "Empty definition and recommendations from model"}
 
         return {
             "response": {
-                "definition": str(definition),
-                "recommendations": str(recommendations),
+                "definition": definition,
+                "recommendations": recommendations,
             }
         }
 
@@ -717,12 +718,21 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             else:
                 self._set_headers(200)
 
-            self.wfile.write(json.dumps(result, indent=2).encode())
+            try:
+                self.wfile.write(json.dumps(result, indent=2).encode())
+            except BrokenPipeError:
+                logger.warning("Client disconnected before /explain-mechanic response could be written")
+
+        except BrokenPipeError:
+            logger.warning("Client disconnected during /explain-mechanic handling")
 
         except Exception as e:
             logger.error(f"Error handling explain-mechanic: {e}")
-            self._set_headers(500)
-            self.wfile.write(json.dumps({"error": str(e)}).encode())
+            try:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+            except BrokenPipeError:
+                logger.warning("Client disconnected before /explain-mechanic error response could be written")
 
     def log_message(self, format, *args):
         """Override to use logging module"""

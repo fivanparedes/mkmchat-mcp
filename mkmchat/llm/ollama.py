@@ -372,23 +372,60 @@ Answer:"""
             return f"Error: {str(e)}"
     
     def _build_mechanic_rag_context(self, mechanic: str) -> str:
-        """Semantic search across all document types; dedupe by content hash."""
+        """Semantic search across all document types with context budget safeguards."""
         if not self.rag_system or not self.rag_system.enabled:
             return ""
+
+        try:
+            top_k = int(os.getenv("MKM_MECHANIC_RAG_TOP_K", "16"))
+        except ValueError:
+            top_k = 16
+        top_k = max(6, min(28, top_k))
+
+        try:
+            max_passages = int(os.getenv("MKM_MECHANIC_RAG_MAX_PASSAGES", "8"))
+        except ValueError:
+            max_passages = 8
+        max_passages = max(3, min(16, max_passages))
+
+        try:
+            max_chars = int(os.getenv("MKM_MECHANIC_RAG_MAX_CHARS", "2400"))
+        except ValueError:
+            max_chars = 2400
+        max_chars = max(800, min(12000, max_chars))
+
         results = self.rag_system.search(
-            mechanic, top_k=28, doc_type=None, min_similarity=0.25
+            mechanic, top_k=top_k, doc_type=None, min_similarity=0.25
         )
         seen_hashes: set[str] = set()
         parts: List[str] = []
+        used_chars = 0
         for doc, score in results:
             digest = hashlib.sha256(doc.content.strip().encode("utf-8")).hexdigest()
             if digest in seen_hashes:
                 continue
+
+            candidate = doc.content.strip()
+            if not candidate:
+                continue
+
             seen_hashes.add(digest)
             meta = json.dumps(doc.metadata, ensure_ascii=False) if doc.metadata else "{}"
-            parts.append(
+            snippet = (
                 f"### [{doc.doc_type}] (score {score:.3f}) metadata={meta}\n{doc.content}\n"
             )
+            if used_chars + len(snippet) > max_chars:
+                remaining = max_chars - used_chars
+                if remaining <= 220:
+                    break
+                snippet = snippet[:remaining].rstrip() + "\n..."
+
+            parts.append(snippet)
+            used_chars += len(snippet)
+
+            if len(parts) >= max_passages or used_chars >= max_chars:
+                break
+
         if not parts:
             return "=== RAG ===\nNo indexed passages matched strongly enough. Use general MK Mobile knowledge and say so if uncertain.\n"
         return "=== RAG (characters, equipment, gameplay, glossary) ===\n" + "\n".join(parts)
@@ -415,10 +452,16 @@ Answer:"""
             return str(val)
         if isinstance(val, list):
             return "\n".join(OllamaAssistant._coerce_mechanic_value(x) for x in val).strip()
+        if isinstance(val, dict):
+            try:
+                return json.dumps(val, ensure_ascii=False)
+            except Exception:
+                return str(val).strip()
         return str(val).strip()
 
     def _dict_to_definition_recommendations(self, data: Any) -> Optional[Dict[str, str]]:
         if not isinstance(data, dict):
+            logger.debug("_dict_to_definition_recommendations: parsed payload is not a dict")
             return None
         d_raw = data.get("definition")
         if d_raw is None:
@@ -432,7 +475,14 @@ Answer:"""
         d = self._coerce_mechanic_value(d_raw)
         r = self._coerce_mechanic_value(r_raw)
 
+        d = d.strip()
+        r = r.strip()
+
         if not d and not r:
+            logger.debug(
+                "_dict_to_definition_recommendations: dict present but mechanic keys empty; keys=%s",
+                list(data.keys()),
+            )
             return None
         return {"definition": d, "recommendations": r}
 
@@ -440,23 +490,26 @@ Answer:"""
         """Try strict JSON, then JSONDecoder.raw_decode from first '{'."""
         t = self._strip_json_fences(text)
         if not t:
+            logger.debug("_parse_mechanic_json_object: empty content after stripping fences")
             return None
         try:
             data = json.loads(t)
             out = self._dict_to_definition_recommendations(data)
             if out is not None:
+                logger.debug("_parse_mechanic_json_object: parsed with json.loads")
                 return out
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug("_parse_mechanic_json_object: json.loads failed: %s", e)
         brace = t.find("{")
         if brace != -1:
             try:
                 obj, _ = json.JSONDecoder().raw_decode(t[brace:])
                 out = self._dict_to_definition_recommendations(obj)
                 if out is not None:
+                    logger.debug("_parse_mechanic_json_object: parsed with raw_decode")
                     return out
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.debug("_parse_mechanic_json_object: raw_decode failed: %s", e)
         start = t.find("{")
         end = t.rfind("}")
         if start != -1 and end != -1 and end > start:
@@ -464,9 +517,10 @@ Answer:"""
                 data = json.loads(t[start : end + 1])
                 out = self._dict_to_definition_recommendations(data)
                 if out is not None:
+                    logger.debug("_parse_mechanic_json_object: parsed with brace slicing")
                     return out
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.debug("_parse_mechanic_json_object: brace-slice parse failed: %s", e)
         return None
 
     def _parse_mechanic_fallback_sections(self, text: str) -> Optional[Dict[str, str]]:
@@ -572,7 +626,7 @@ Produce the JSON for this mechanic."""
                         "keep_alive": 0,
                         "options": {
                             "temperature": 0.25,
-                            "num_predict": 3000,
+                            "num_predict": int(os.getenv("MKM_MECHANIC_NUM_PREDICT", "1200")),
                         },
                     },
                     timeout=None,
@@ -585,10 +639,18 @@ Produce the JSON for this mechanic."""
                 raw = (result.get("response") or "").strip()
                 parsed = self._parse_mechanic_json(raw)
                 if parsed is None:
+                    preview = re.sub(r"\s+", " ", raw[:300]) if raw else ""
+                    logger.warning(
+                        "explain_mechanic: parse failed for model=%s, raw_preview=%s",
+                        use_model,
+                        preview,
+                    )
                     return {
-                        "error": "Failed to parse JSON response from model",
-                        "raw_response": raw,
+                        "error": "Model response could not be parsed into mechanic sections.",
                     }
+
+                parsed["definition"] = parsed["definition"].strip()
+                parsed["recommendations"] = parsed["recommendations"].strip()
 
                 if not parsed["definition"] and not parsed["recommendations"]:
                     return {"error": "Empty definition and recommendations from model"}
@@ -596,6 +658,19 @@ Produce the JSON for this mechanic."""
                 return parsed
 
         except Exception as e:
+            if HTTPX_AVAILABLE and isinstance(
+                e,
+                (
+                    httpx.ReadTimeout,
+                    httpx.ConnectError,
+                    httpx.RemoteProtocolError,
+                    httpx.HTTPError,
+                ),
+            ):
+                logger.error("Error explaining mechanic (transport): %s", e)
+                return {
+                    "error": "Connection to Ollama failed while generating mechanic explanation. Please retry.",
+                }
             logger.error(f"Error explaining mechanic: {e}")
             return {"error": str(e)}
 

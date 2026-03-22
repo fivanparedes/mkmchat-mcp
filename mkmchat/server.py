@@ -236,6 +236,10 @@ async def list_tools():
                     "mechanic": {
                         "type": "string",
                         "description": "Game mechanic to explain"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Optional Ollama model name (e.g., 'llama3.2:3b')"
                     }
                 },
                 "required": ["mechanic"]
@@ -298,7 +302,8 @@ async def call_tool(name: str, arguments: dict):
             )
         elif name == "explain_mechanic_ollama":
             return await explain_mechanic_ollama(
-                mechanic=arguments["mechanic"]
+                mechanic=arguments["mechanic"],
+                model=arguments.get("model")
             )
         else:
             raise ValueError(f"Unknown tool: {name}")

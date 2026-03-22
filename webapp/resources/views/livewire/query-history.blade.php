@@ -1,4 +1,4 @@
-﻿<div>
+<div>
     @if($viewingId !== null)
         {{-- Result detail view --}}
         <div class="space-y-6 mb-8">
@@ -7,6 +7,9 @@
                     @if($viewingQueryType === 'ask_question')
                         <span class="text-mk-fire">&#128172;</span>
                         <em class="text-mk-fire-light">{{ $viewingStrategy }}</em>
+                    @elseif($viewingQueryType === 'explain_mechanic')
+                        <span class="text-mk-fire">&#9881;&#65039;</span>
+                        Mechanic: <em class="text-mk-fire-light">{{ $viewingStrategy }}</em>
                     @else
                         <span class="text-mk-fire">&#9876;&#65039;</span>
                         Team for: <em class="text-mk-fire-light">{{ $viewingStrategy }}</em>
@@ -42,6 +45,8 @@
                         <a href="{{ route('dashboard') }}" wire:navigate class="text-mk-fire hover:underline">Make your first team suggestion &rarr;</a>
                         &nbsp;or&nbsp;
                         <a href="{{ route('ask') }}" wire:navigate class="text-mk-fire hover:underline">Ask a question &rarr;</a>
+                        &nbsp;or&nbsp;
+                        <a href="{{ route('mechanic') }}" wire:navigate class="text-mk-fire hover:underline">Explain a mechanic &rarr;</a>
                     </p>
                 </div>
             @else
@@ -65,6 +70,8 @@
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     @if(($history->query_type ?? 'team_suggest') === 'ask_question')
                                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-950 text-purple-300">&#128172; Ask</span>
+                                    @elseif(($history->query_type ?? '') === 'explain_mechanic')
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-amber-950 text-amber-300">&#9881;&#65039; Mechanic</span>
                                     @else
                                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-950 text-blue-300">&#9876;&#65039; Team</span>
                                     @endif

@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -49,11 +49,11 @@ class MkmApiService
             // LLM inference can be slow — suspend the execution time limit for this call.
             set_time_limit(0);
 
-            $response = $this->httpRequest()->timeout(600)
+            $response = $this->httpRequest()->timeout($this->httpTimeoutSeconds())
                 ->post("{$this->baseUrl}/suggest-team", $payload);
-        } catch (ConnectionException $e) {
+        } catch (RequestException $e) {
             throw new RuntimeException(
-                'Cannot reach the MK Mobile assistant API. Make sure the Python server is running.',
+                $this->pythonApiConnectionMessage($e),
                 0,
                 $e
             );
@@ -94,11 +94,11 @@ class MkmApiService
         try {
             set_time_limit(0);
 
-            $response = $this->httpRequest()->timeout(600)
+            $response = $this->httpRequest()->timeout($this->httpTimeoutSeconds())
                 ->post("{$this->baseUrl}/ask-question", $payload);
-        } catch (ConnectionException $e) {
+        } catch (RequestException $e) {
             throw new RuntimeException(
-                'Cannot reach the MK Mobile assistant API. Make sure the Python server is running.',
+                $this->pythonApiConnectionMessage($e),
                 0,
                 $e
             );
@@ -121,6 +121,66 @@ class MkmApiService
         }
 
         return $text;
+    }
+
+    /**
+     * Explain a game mechanic (definition + recommendations from RAG + local LLM).
+     *
+     * @return array{definition: string, recommendations: string}
+     *
+     * @throws RuntimeException
+     */
+    public function explainMechanic(string $mechanic, ?string $model = null): array
+    {
+        $payload = ['mechanic' => $mechanic];
+
+        if ($model) {
+            $payload['model'] = $model;
+        }
+
+        try {
+            set_time_limit(0);
+
+            $response = $this->httpRequest()->timeout($this->httpTimeoutSeconds())
+                ->post("{$this->baseUrl}/explain-mechanic", $payload);
+        } catch (RequestException $e) {
+            throw new RuntimeException(
+                $this->pythonApiConnectionMessage($e),
+                0,
+                $e
+            );
+        }
+
+        $body = $response->json();
+
+        if ($response->failed() || isset($body['error'])) {
+            $message = $body['error'] ?? "API returned HTTP {$response->status()}";
+            if (isset($body['raw_response'])) {
+                $message .= ' (raw LLM output could not be parsed as JSON)';
+            }
+            throw new RuntimeException($message);
+        }
+
+        if (!isset($body['response']) || !is_array($body['response'])) {
+            throw new RuntimeException('Unexpected API response shape: missing "response" object.');
+        }
+
+        $inner = $body['response'];
+        $definition = isset($inner['definition']) && is_string($inner['definition'])
+            ? trim($inner['definition'])
+            : '';
+        $recommendations = isset($inner['recommendations']) && is_string($inner['recommendations'])
+            ? trim($inner['recommendations'])
+            : '';
+
+        if ($definition === '' && $recommendations === '') {
+            throw new RuntimeException('API returned success but no mechanic content was provided.');
+        }
+
+        return [
+            'definition' => $definition,
+            'recommendations' => $recommendations,
+        ];
     }
 
     /**
@@ -205,5 +265,26 @@ class MkmApiService
         }
 
         return $request;
+    }
+
+    /**
+     * Seconds to wait for the Python API (LLM calls can be very slow on low-spec hosts).
+     */
+    private function httpTimeoutSeconds(): int
+    {
+        $t = (int) config('mkm.http_timeout_seconds', 3600);
+
+        return max(60, $t);
+    }
+
+    private function pythonApiConnectionMessage(RequestException $e): string
+    {
+        $msg = $e->getMessage();
+        if (preg_match('/timeout|timed out|cURL error 28|Operation timed out|Connection timed out|Failed to connect/i', $msg)) {
+            return 'The Python assistant API did not finish within the HTTP time limit (slow LLM or CPU). '
+                .'Increase MKM_HTTP_TIMEOUT_SECONDS in your environment (see config/mkm.php), then retry.';
+        }
+
+        return 'Cannot reach the MK Mobile assistant API. Make sure the Python server is running.';
     }
 }

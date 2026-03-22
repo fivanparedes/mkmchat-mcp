@@ -48,6 +48,7 @@ class QueryHistoryList extends Component
     {
         return match($this->viewingQueryType) {
             'ask_question' => 'livewire.partials.result-ask-question',
+            'explain_mechanic' => 'livewire.partials.result-explain-mechanic',
             default        => 'livewire.partials.result-team-suggest',
         };
     }

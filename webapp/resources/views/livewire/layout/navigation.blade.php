@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use App\Livewire\Actions\Logout;
 use Illuminate\Support\Facades\Auth;
@@ -21,8 +21,8 @@ $logout = function (Logout $logout): void {
                     </a>
                 </div>
 
-                <!-- Navigation Links -->
-                <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
+                <!-- Navigation Links (flex-wrap so all items stay visible on narrow desktops) -->
+                <div class="hidden sm:flex sm:flex-wrap sm:items-center sm:gap-x-5 lg:gap-x-8 sm:gap-y-1 sm:-my-px sm:ms-10 sm:min-w-0">
                     <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')" wire:navigate>
                         {{ __('Team Suggest') }}
                     </x-nav-link>
@@ -31,6 +31,9 @@ $logout = function (Logout $logout): void {
                     </x-nav-link>
                     <x-nav-link :href="route('ask')" :active="request()->routeIs('ask')" wire:navigate>
                         {{ __('Ask') }}
+                    </x-nav-link>
+                    <x-nav-link :href="route('mechanic')" :active="request()->routeIs('mechanic')" wire:navigate>
+                        {{ __('Explain mechanic') }}
                     </x-nav-link>
 
                     @if (Auth::user()->isAdmin())
@@ -58,6 +61,10 @@ $logout = function (Logout $logout): void {
                     <x-slot name="content">
                         <x-dropdown-link :href="route('profile')" wire:navigate>
                             {{ __('Profile') }}
+                        </x-dropdown-link>
+
+                        <x-dropdown-link :href="route('mechanic')" wire:navigate>
+                            {{ __('Explain mechanic') }}
                         </x-dropdown-link>
 
                         <button wire:click="logout" class="w-full text-start">
@@ -92,6 +99,9 @@ $logout = function (Logout $logout): void {
             </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('ask')" :active="request()->routeIs('ask')" wire:navigate>
                 {{ __('Ask') }}
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('mechanic')" :active="request()->routeIs('mechanic')" wire:navigate>
+                {{ __('Explain mechanic') }}
             </x-responsive-nav-link>
 
             @if (Auth::user()->isAdmin())

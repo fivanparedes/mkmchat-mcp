@@ -8,6 +8,7 @@ Route::middleware(['auth', 'verified', 'throttle:ai-actions'])->group(function (
     Route::view('dashboard', 'dashboard')->name('dashboard');
     Route::view('history', 'history')->name('history');
     Route::view('ask', 'ask')->name('ask');
+    Route::view('mechanic', 'mechanic')->name('mechanic');
     Route::view('profile', 'profile')->name('profile');
 });
 

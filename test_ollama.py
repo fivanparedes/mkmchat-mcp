@@ -111,7 +111,11 @@ async def test_explain_mechanic():
     
     print("Explaining 'power drain' mechanic...")
     response = await assistant.explain_mechanic("power drain")
-    print(f"Response: {response[:400]}...\n")
+    if isinstance(response, dict) and response.get("error"):
+        print(f"Error: {response['error']}\n")
+        return False
+    snippet = str(response)[:400]
+    print(f"Response: {snippet}...\n")
     
     return True
 

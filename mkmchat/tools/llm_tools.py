@@ -189,13 +189,29 @@ async def explain_mechanic_ollama(
                 ]
             }
         
-        response = await assistant.explain_mechanic(mechanic)
-        
+        result = await assistant.explain_mechanic(mechanic)
+
+        if isinstance(result, dict) and result.get("error"):
+            err = result["error"]
+            raw = result.get("raw_response")
+            msg = err if not raw else f"{err}\n\nRaw: {raw[:800]}"
+            return {
+                "content": [{"type": "text", "text": msg}]
+            }
+
+        definition = result.get("definition", "") if isinstance(result, dict) else ""
+        recommendations = result.get("recommendations", "") if isinstance(result, dict) else ""
+        text = (
+            f"# Game Mechanic: {mechanic}\n\n"
+            f"## Definition\n\n{definition}\n\n"
+            f"## Recommendations\n\n{recommendations}"
+        )
+
         return {
             "content": [
                 {
                     "type": "text",
-                    "text": f"# Game Mechanic: {mechanic}\n\n{response}"
+                    "text": text,
                 }
             ]
         }

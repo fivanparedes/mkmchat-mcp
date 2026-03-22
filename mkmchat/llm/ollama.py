@@ -1,6 +1,8 @@
 """Ollama local LLM integration for intelligent game querying"""
 
+import hashlib
 import os
+import re
 import logging
 from typing import Optional, Dict, Any, List
 import json
@@ -369,62 +371,233 @@ Answer:"""
             logger.error(f"Error suggesting team: {e}")
             return f"Error: {str(e)}"
     
+    def _build_mechanic_rag_context(self, mechanic: str) -> str:
+        """Semantic search across all document types; dedupe by content hash."""
+        if not self.rag_system or not self.rag_system.enabled:
+            return ""
+        results = self.rag_system.search(
+            mechanic, top_k=28, doc_type=None, min_similarity=0.25
+        )
+        seen_hashes: set[str] = set()
+        parts: List[str] = []
+        for doc, score in results:
+            digest = hashlib.sha256(doc.content.strip().encode("utf-8")).hexdigest()
+            if digest in seen_hashes:
+                continue
+            seen_hashes.add(digest)
+            meta = json.dumps(doc.metadata, ensure_ascii=False) if doc.metadata else "{}"
+            parts.append(
+                f"### [{doc.doc_type}] (score {score:.3f}) metadata={meta}\n{doc.content}\n"
+            )
+        if not parts:
+            return "=== RAG ===\nNo indexed passages matched strongly enough. Use general MK Mobile knowledge and say so if uncertain.\n"
+        return "=== RAG (characters, equipment, gameplay, glossary) ===\n" + "\n".join(parts)
+
+    @staticmethod
+    def _strip_json_fences(text: str) -> str:
+        t = text.strip()
+        if not t.startswith("```"):
+            return t
+        lines = t.split("\n")
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _coerce_mechanic_value(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val.strip()
+        if isinstance(val, (int, float, bool)):
+            return str(val)
+        if isinstance(val, list):
+            return "\n".join(OllamaAssistant._coerce_mechanic_value(x) for x in val).strip()
+        return str(val).strip()
+
+    def _dict_to_definition_recommendations(self, data: Any) -> Optional[Dict[str, str]]:
+        if not isinstance(data, dict):
+            return None
+        d_raw = data.get("definition")
+        if d_raw is None:
+            d_raw = data.get("Definition")
+        r_raw = data.get("recommendations")
+        if r_raw is None:
+            r_raw = data.get("Recommendations")
+        if r_raw is None:
+            r_raw = data.get("recommendation") or data.get("Recommendation")
+
+        d = self._coerce_mechanic_value(d_raw)
+        r = self._coerce_mechanic_value(r_raw)
+
+        if not d and not r:
+            return None
+        return {"definition": d, "recommendations": r}
+
+    def _parse_mechanic_json_object(self, text: str) -> Optional[Dict[str, str]]:
+        """Try strict JSON, then JSONDecoder.raw_decode from first '{'."""
+        t = self._strip_json_fences(text)
+        if not t:
+            return None
+        try:
+            data = json.loads(t)
+            out = self._dict_to_definition_recommendations(data)
+            if out is not None:
+                return out
+        except json.JSONDecodeError:
+            pass
+        brace = t.find("{")
+        if brace != -1:
+            try:
+                obj, _ = json.JSONDecoder().raw_decode(t[brace:])
+                out = self._dict_to_definition_recommendations(obj)
+                if out is not None:
+                    return out
+            except json.JSONDecodeError:
+                pass
+        start = t.find("{")
+        end = t.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                data = json.loads(t[start : end + 1])
+                out = self._dict_to_definition_recommendations(data)
+                if out is not None:
+                    return out
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    def _parse_mechanic_fallback_sections(self, text: str) -> Optional[Dict[str, str]]:
+        """When JSON is broken (unescaped quotes, etc.), split on Markdown-style headings."""
+        t = (text or "").strip()
+        if len(t) < 20:
+            return None
+
+        split_patterns = [
+            r"(?is)\n\s*#{1,3}\s*recommendations\s*\n",
+            r"(?is)^\s*#{1,3}\s*recommendations\s*\n",
+            r"(?is)\n\s*\*{0,2}\s*recommendations\s*\*{0,2}\s*\n",
+            r"(?is)\n\s*recommendations\s*:\s*\n",
+            r"(?is)\n\s*---+\s*\n\s*recommendations\s*\n",
+        ]
+        for pat in split_patterns:
+            m = re.search(pat, t)
+            if m:
+                left = t[: m.start()].strip()
+                right = t[m.end() :].strip()
+                left = re.sub(
+                    r"(?is)^\s*#{1,3}\s*definition\s*\n",
+                    "",
+                    left,
+                )
+                left = re.sub(r"(?is)^\s*\*{0,2}\s*definition\s*\*{0,2}\s*\n", "", left)
+                left = left.strip()
+                if left or right:
+                    return {"definition": left, "recommendations": right}
+
+        one_block = self._strip_json_fences(t)
+        if len(one_block) > 80 and "{" not in one_block[:200]:
+            logger.warning(
+                "explain_mechanic: using full text as definition (no JSON and no section split)"
+            )
+            return {"definition": one_block, "recommendations": ""}
+
+        return None
+
+    def _parse_mechanic_json(self, response_text: str) -> Optional[Dict[str, str]]:
+        """Parse model output: JSON first, then Markdown section split, then plain prose."""
+        text = (response_text or "").strip()
+        if not text:
+            return None
+
+        parsed = self._parse_mechanic_json_object(text)
+        if parsed is not None:
+            return parsed
+
+        fallback = self._parse_mechanic_fallback_sections(text)
+        if fallback is not None:
+            logger.warning("explain_mechanic: recovered using non-JSON fallback parse")
+        return fallback
+
     async def explain_mechanic(
         self,
-        mechanic: str
-    ) -> str:
-        """Explain a game mechanic in detail"""
+        mechanic: str,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Explain a game mechanic using broad RAG context and structured JSON from the model.
+
+        Returns:
+            On success: {"definition": str, "recommendations": str}
+            On failure: {"error": str}
+        """
         if not self.enabled:
-            return "Ollama assistant not available."
-        
-        # Get relevant context from RAG
-        context = ""
-        if self.rag_system and self.rag_system.enabled:
-            gameplay_results = self.rag_system.search_gameplay(mechanic, top_k=3)
-            glossary_results = self.rag_system.search_glossary(mechanic, top_k=3)
-            
-            if gameplay_results:
-                context += "=== Gameplay Information ===\n"
-                for doc, score in gameplay_results:
-                    context += f"\n{doc.content}\n"
-            
-            if glossary_results:
-                context += "\n=== Glossary ===\n"
-                for doc, score in glossary_results:
-                    context += f"\n{doc.content}\n"
-        
-        prompt = f"""{self.system_context}
+            return {"error": "Ollama assistant not available."}
+
+        use_model = model or self.model_name
+        context = self._build_mechanic_rag_context(mechanic)
+
+        system_prompt = f"""{self.system_context}
+
+You explain Mortal Kombat Mobile mechanics using the RAG context below when relevant.
+
+=== RULES ===
+- "definition": What the mechanic is, how it works in combat/modes, and how it interacts with other systems. Ground this in the RAG passages when possible.
+- "recommendations": Practical tips: team ideas, equipment that synergizes, counters, and mode-specific advice. Keep this separate from the neutral definition.
+- Use Markdown inside the JSON string values (headings, bullets) where helpful.
+- Inside JSON strings, escape any double-quote character as \\" and use \\n for newlines so the output is valid JSON.
+- If RAG is thin, say what is unknown and avoid inventing specific card or gear names not supported by context.
+
+Respond with ONLY valid JSON (no markdown code fences, no text before or after the object) in this exact shape:
+{{"definition": "...", "recommendations": "..."}}"""
+
+        user_prompt = f"""RAG context for mechanic: "{mechanic}"
 
 {context}
 
-Please explain this game mechanic: {mechanic}
+Produce the JSON for this mechanic."""
 
-Include:
-1. What it is and how it works
-2. Which characters/equipment use it
-3. Strategic implications
-4. Tips for using or countering it
-
-Answer:"""
-        
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.base_url}/api/generate",
                     json={
-                        "model": self.model_name,
-                        "prompt": prompt,
-                        "stream": False
+                        "model": use_model,
+                        "system": system_prompt,
+                        "prompt": user_prompt,
+                        "stream": False,
+                        "format": "json",
+                        "keep_alive": 0,
+                        "options": {
+                            "temperature": 0.25,
+                            "num_predict": 3000,
+                        },
                     },
-                    timeout=None  # No timeout - wait for response
+                    timeout=None,
                 )
-                
+
+                if response.status_code != 200:
+                    return {"error": f"Ollama API returned status {response.status_code}"}
+
                 result = response.json()
-                return result.get("response", "No response generated")
-                
+                raw = (result.get("response") or "").strip()
+                parsed = self._parse_mechanic_json(raw)
+                if parsed is None:
+                    return {
+                        "error": "Failed to parse JSON response from model",
+                        "raw_response": raw,
+                    }
+
+                if not parsed["definition"] and not parsed["recommendations"]:
+                    return {"error": "Empty definition and recommendations from model"}
+
+                return parsed
+
         except Exception as e:
             logger.error(f"Error explaining mechanic: {e}")
-            return f"Error: {str(e)}"
+            return {"error": str(e)}
 
 
 # Singleton instance

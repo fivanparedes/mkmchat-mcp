@@ -41,6 +41,7 @@ services:
       MKM_API_URL: http://python-api:8080
       MKM_DAILY_LIMIT: ${MKM_DAILY_LIMIT:-0}
       MKM_WEB_RATE_LIMIT_PER_MINUTE: ${MKM_WEB_RATE_LIMIT_PER_MINUTE:-10}
+      MKM_HTTP_TIMEOUT_SECONDS: ${MKM_HTTP_TIMEOUT_SECONDS:-3600}
     ports:
       - "8000:8000"
     depends_on:

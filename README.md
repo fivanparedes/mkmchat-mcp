@@ -1,4 +1,4 @@
-﻿# MKMChat  Mortal Kombat Mobile Assistant
+# MKMChat  Mortal Kombat Mobile Assistant
 
 > AI-powered team builder and game assistant for **Mortal Kombat Mobile**, running entirely on your local machine.
 
@@ -29,7 +29,7 @@ MKMChat is a full-stack application combining a Python AI backend (RAG + local L
 - Cross-service API key auth enabled (Laravel -> Python API)
 - Rate limiting enabled in Python API and Laravel web layer
 - RAG cache path and package data paths stabilized for containers
-- Team suggestion, ask-question, and query history flows operational
+- Team suggestion, ask-question, explain-mechanic, and query history flows operational
 
 ---
 
@@ -101,12 +101,13 @@ ollama pull llama3.2:3b
 python -m mkmchat http
 ```
 
-The server exposes two endpoints at `http://localhost:8080`:
+The server exposes these endpoints at `http://localhost:8080`:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/suggest-team` | POST | Returns a 3-character team with equipment |
 | `/ask-question` | POST | Answers a free-text question about MK Mobile |
+| `/explain-mechanic` | POST | Explains a mechanic (definition + recommendations via RAG + LLM) |
 
 ### 2. Laravel Web App
 
@@ -204,6 +205,7 @@ Core variables used by current Docker setup:
 | `MKM_API_URL` | `http://python-api:8080` | webapp | Internal Docker URL for Python API |
 | `MKM_DAILY_LIMIT` | `0` | webapp | Per-user daily limit (0 = unlimited) |
 | `MKM_WEB_RATE_LIMIT_PER_MINUTE` | `10` | webapp | Laravel-side per-minute limiter |
+| `MKM_HTTP_TIMEOUT_SECONDS` | `3600` | webapp | Max wait for Python LLM endpoints (raise on slow hardware) |
 | `MKM_RATE_LIMIT_PER_MINUTE` | `20` | python-api | Python API per-minute limiter |
 | `MKM_RATE_LIMIT_BURST` | `5` | python-api | Python API burst limiter |
 | `APP_KEY` | *(empty or base64 key)* | webapp | Laravel app key; leave empty for auto-generation on first boot |
@@ -212,7 +214,7 @@ Core variables used by current Docker setup:
 
 ## HTTP API Reference
 
-Both endpoints accept JSON and return JSON.
+These POST endpoints accept JSON and return JSON.
 
 When API key auth is enabled, include the configured header:
 - Header: `X-API-Key`
@@ -267,6 +269,25 @@ Response:
 }
 ```
 
+### `POST /explain-mechanic`
+
+```bash
+curl -X POST http://localhost:8080/explain-mechanic \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: change-me-in-production" \
+  -d '{"mechanic": "Power drain"}'
+```
+
+Response:
+```json
+{
+  "response": {
+    "definition": "...",
+    "recommendations": "..."
+  }
+}
+```
+
 ---
 
 ## Project Structure
@@ -274,7 +295,7 @@ Response:
 ```
 mkmchat-mcp/
  mkmchat/                  # Python package  AI backend
-    http_server.py        # HTTP API server (/suggest-team, /ask-question)
+    http_server.py        # HTTP API server (/suggest-team, /ask-question, /explain-mechanic)
     server.py             # MCP server (alternative to HTTP)
     data/
        loader.py         # TSV/TXT data loader

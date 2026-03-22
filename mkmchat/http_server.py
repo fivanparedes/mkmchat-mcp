@@ -326,6 +326,43 @@ async def ask_question_json(question: str, model: Optional[str] = None) -> dict:
         return {"error": str(e)}
 
 
+async def explain_mechanic_json(mechanic: str, model: Optional[str] = None) -> dict:
+    """Explain a mechanic with RAG and return definition + recommendations as JSON-shaped dict."""
+    try:
+        rag = get_rag_system()
+        assistant = get_ollama_assistant(rag_system=rag)
+
+        if not assistant.enabled:
+            return {"error": "Ollama assistant not available. Make sure Ollama is running."}
+
+        result = await assistant.explain_mechanic(mechanic, model=model)
+
+        if isinstance(result, dict) and result.get("error"):
+            err: dict = {"error": result["error"]}
+            if result.get("raw_response") is not None:
+                err["raw_response"] = result["raw_response"]
+            return err
+
+        if not isinstance(result, dict):
+            return {"error": "Unexpected response from explain_mechanic"}
+
+        definition = result.get("definition", "")
+        recommendations = result.get("recommendations", "")
+        if not str(definition).strip() and not str(recommendations).strip():
+            return {"error": "Empty definition and recommendations from model"}
+
+        return {
+            "response": {
+                "definition": str(definition),
+                "recommendations": str(recommendations),
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error in explain_mechanic_json: {e}")
+        return {"error": str(e)}
+
+
 class MKMobileHTTPHandler(BaseHTTPRequestHandler):
     """HTTP request handler for MK Mobile API"""
     
@@ -443,7 +480,7 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             self._set_headers(200)
             response = {
                 "service": "MK Mobile Assistant API",
-                "version": "2.2.0",
+                "version": "2.3.0",
                 "endpoints": {
                     "/suggest-team": {
                         "method": "POST",
@@ -459,6 +496,14 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
                         "description": "Ask any question about MK Mobile, returns Markdown text",
                         "body": {
                             "question": "string (required)",
+                            "model": "string (optional, Ollama model tag)"
+                        }
+                    },
+                    "/explain-mechanic": {
+                        "method": "POST",
+                        "description": "Explain a game mechanic using RAG + local LLM",
+                        "body": {
+                            "mechanic": "string (required)",
                             "model": "string (optional, Ollama model tag)"
                         }
                     },
@@ -489,6 +534,8 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             self._handle_suggest_team()
         elif parsed_path.path == "/ask-question":
             self._handle_ask_question()
+        elif parsed_path.path == "/explain-mechanic":
+            self._handle_explain_mechanic()
         else:
             self._set_headers(404)
             self.wfile.write(json.dumps({"error": "Not found"}).encode())
@@ -629,6 +676,51 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
 
         except Exception as e:
             logger.error(f"Error handling ask-question: {e}")
+            self._set_headers(500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    def _handle_explain_mechanic(self):
+        """Handle /explain-mechanic endpoint"""
+        try:
+            data = self._read_json_body({"mechanic": "string"})
+            if data is None:
+                return
+
+            mechanic = data.get("mechanic")
+            if not isinstance(mechanic, str) or not mechanic.strip():
+                self._set_headers(400)
+                self.wfile.write(json.dumps({
+                    "error": "Missing required field: mechanic"
+                }).encode())
+                return
+
+            mechanic = mechanic.strip()
+            max_len = self._get_int_env("MKM_MAX_MECHANIC_LENGTH", self._get_int_env("MKM_MAX_QUESTION_LENGTH", 2000))
+            if len(mechanic) > max_len:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({
+                    "error": f"Mechanic exceeds {max_len} characters"
+                }).encode())
+                return
+
+            model = data.get("model")
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(explain_mechanic_json(mechanic, model=model))
+            finally:
+                loop.close()
+
+            if "error" in result and "response" not in result:
+                self._set_headers(500)
+            else:
+                self._set_headers(200)
+
+            self.wfile.write(json.dumps(result, indent=2).encode())
+
+        except Exception as e:
+            logger.error(f"Error handling explain-mechanic: {e}")
             self._set_headers(500)
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 

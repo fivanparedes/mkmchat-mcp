@@ -112,7 +112,7 @@ _MATCH_STOPWORDS: Set[str] = {
     "the", "and", "for", "with", "from", "that", "this", "what", "which", "about",
     "tell", "show", "give", "does", "how", "when", "where", "why", "who", "into",
     "can", "are", "is", "was", "were", "have", "has", "had", "please", "need",
-    "character", "characters", "passive", "passives", "variant", "variants",
+    "character", "characters", "variant", "variants",
 }
 
 
@@ -243,6 +243,48 @@ def _retrieve_character_items(
     return character_items[:top_k_final]
 
 
+def _format_retrieved_snippets(
+    rag,
+    query: str,
+    *,
+    doc_type: str,
+    top_k_per_variant: int,
+    min_similarity: float,
+    max_items: int,
+    max_chars: Optional[int],
+    snippet_chars: int,
+    empty_text: str,
+) -> str:
+    if not rag or not rag.enabled:
+        return empty_text
+
+    lines: List[str] = []
+    used_chars = 0
+    for doc, score in _search_with_variants(
+        rag,
+        query,
+        doc_type=doc_type,
+        top_k_per_variant=top_k_per_variant,
+        min_similarity=min_similarity,
+    )[:max_items]:
+        content = str(getattr(doc, "content", "")).strip().replace("\n", " ")
+        if not content:
+            continue
+
+        snippet = content[:snippet_chars].strip()
+        line = f"- (rel={score:.2f}) {snippet}"
+
+        if max_chars and max_chars > 0:
+            projected = used_chars + len(line) + 1
+            if projected > max_chars:
+                break
+            used_chars = projected
+
+        lines.append(line)
+
+    return "\n".join(lines) if lines else empty_text
+
+
 def build_chat_context(rag, question: str) -> Dict[str, str]:
     """Build focused, relevance-filtered context for chat QA."""
     context = {
@@ -302,37 +344,28 @@ def build_chat_context(rag, question: str) -> Dict[str, str]:
 
     context["equipment"] = "\n".join(equip_lines) if equip_lines else "No relevant equipment matches found."
 
-    gameplay_pool: Dict[int, Tuple[object, float]] = {}
-    for variant in search_variants:
-        for doc, score in rag.search(
-            variant,
-            top_k=5,
-            doc_type="gameplay",
-            min_similarity=0.18,
-        ):
-            key = id(doc)
-            existing = gameplay_pool.get(key)
-            if not existing or score > existing[1]:
-                gameplay_pool[key] = (doc, score)
-    gameplay_items = sorted(gameplay_pool.values(), key=lambda x: x[1], reverse=True)
-    gameplay_lines = [f"- (rel={score:.2f}) {doc.content[:260].strip()}" for doc, score in gameplay_items[:4]]
-    context["gameplay"] = "\n".join(gameplay_lines) if gameplay_lines else "No directly relevant gameplay snippets found."
-
-    glossary_pool: Dict[int, Tuple[object, float]] = {}
-    for variant in search_variants:
-        for doc, score in rag.search(
-            variant,
-            top_k=5,
-            doc_type="glossary",
-            min_similarity=0.18,
-        ):
-            key = id(doc)
-            existing = glossary_pool.get(key)
-            if not existing or score > existing[1]:
-                glossary_pool[key] = (doc, score)
-    glossary_items = sorted(glossary_pool.values(), key=lambda x: x[1], reverse=True)
-    glossary_lines = [f"- (rel={score:.2f}) {doc.content[:220].strip()}" for doc, score in glossary_items[:4]]
-    context["glossary"] = "\n".join(glossary_lines) if glossary_lines else "No directly relevant glossary snippets found."
+    context["gameplay"] = _format_retrieved_snippets(
+        rag,
+        question,
+        doc_type="gameplay",
+        top_k_per_variant=5,
+        min_similarity=0.18,
+        max_items=4,
+        max_chars=None,
+        snippet_chars=260,
+        empty_text="No directly relevant gameplay snippets found.",
+    )
+    context["glossary"] = _format_retrieved_snippets(
+        rag,
+        question,
+        doc_type="glossary",
+        top_k_per_variant=5,
+        min_similarity=0.18,
+        max_items=4,
+        max_chars=None,
+        snippet_chars=220,
+        empty_text="No directly relevant glossary snippets found.",
+    )
 
     return context
 
@@ -440,11 +473,11 @@ def build_structured_context(
     rag,
     strategy: str,
     *,
-    character_limit: int = 60,
-    equipment_limit: int = 40,
+    character_limit: int = 22,
+    equipment_limit: int = 24,
     passive_max_chars: Optional[int] = None,
-    gameplay_max_chars: Optional[int] = None,
-    glossary_max_chars: Optional[int] = None,
+    gameplay_max_chars: Optional[int] = 1200,
+    glossary_max_chars: Optional[int] = 1200,
 ) -> Dict[str, str]:
     """
     Build clearly structured context for the LLM to reduce hallucinations.
@@ -453,33 +486,29 @@ def build_structured_context(
     Results are already sorted by tier from RAG system (prioritize_tier=True).
     """
     context = {
-        "characters": "",
-        "weapons": "",
-        "armor": "",
-        "accessories": "",
-        "glossary": "",
-        "gameplay": ""
+        "characters": "No matches found",
+        "weapons": "None found",
+        "armor": "None found",
+        "accessories": "None found",
+        "glossary": "No relevant glossary entries found",
+        "gameplay": "No relevant gameplay entries found",
     }
-
-    data_dir = _resolve_runtime_data_dir()
-    
-    # Load glossary from file
-    glossary_file = data_dir / "glossary.txt"
-    if glossary_file.exists():
-        context["glossary"] = glossary_file.read_text(encoding='utf-8').strip()
-    
-    # Load gameplay from file
-    gameplay_file = data_dir / "gameplay.txt"
-    if gameplay_file.exists():
-        gameplay_text = gameplay_file.read_text(encoding='utf-8').strip()
-        if gameplay_max_chars and gameplay_max_chars > 0:
-            gameplay_text = gameplay_text[:gameplay_max_chars].strip()
-        context["gameplay"] = gameplay_text
-
-    if context["glossary"] and glossary_max_chars and glossary_max_chars > 0:
-        context["glossary"] = context["glossary"][:glossary_max_chars].strip()
     
     if not rag or not rag.enabled:
+        data_dir = _resolve_runtime_data_dir()
+        glossary_file = data_dir / "glossary.txt"
+        if glossary_file.exists():
+            glossary_text = glossary_file.read_text(encoding="utf-8").strip()
+            if glossary_max_chars and glossary_max_chars > 0:
+                glossary_text = glossary_text[:glossary_max_chars].strip()
+            context["glossary"] = glossary_text or context["glossary"]
+
+        gameplay_file = data_dir / "gameplay.txt"
+        if gameplay_file.exists():
+            gameplay_text = gameplay_file.read_text(encoding="utf-8").strip()
+            if gameplay_max_chars and gameplay_max_chars > 0:
+                gameplay_text = gameplay_text[:gameplay_max_chars].strip()
+            context["gameplay"] = gameplay_text or context["gameplay"]
         return context
     
     # Variant-aware retrieval with lexical boosting to avoid missing partial character names.
@@ -508,7 +537,7 @@ def build_structured_context(
             passive = passive[:passive_max_chars].rstrip() + "..."
         char_list.append(f"- [{tier}] Rarity: {rarity} | Name: {name} | Passive: {passive}" if passive else f"- [{tier}] Rarity: {rarity} | Name: {name}")
     
-    context["characters"] = "\n".join(char_list) if char_list else "No matches found"
+    context["characters"] = "\n".join(char_list) if char_list else context["characters"]
     
     # Variant-aware equipment retrieval.
     equip_results = _search_with_variants(
@@ -543,9 +572,32 @@ def build_structured_context(
             accessories.append(item_str)
     
     # Items within each category maintain tier order from RAG
-    context["weapons"] = "\n".join(weapons[:]) if weapons else "None found"
-    context["armor"] = "\n".join(armor[:]) if armor else "None found"
-    context["accessories"] = "\n".join(accessories[:]) if accessories else "None found"
+    context["weapons"] = "\n".join(weapons[:]) if weapons else context["weapons"]
+    context["armor"] = "\n".join(armor[:]) if armor else context["armor"]
+    context["accessories"] = "\n".join(accessories[:]) if accessories else context["accessories"]
+
+    context["gameplay"] = _format_retrieved_snippets(
+        rag,
+        strategy,
+        doc_type="gameplay",
+        top_k_per_variant=_safe_positive_int(os.getenv("MKM_STRUCTURED_GAMEPLAY_TOP_K", "8"), 8),
+        min_similarity=0.18,
+        max_items=_safe_positive_int(os.getenv("MKM_STRUCTURED_GAMEPLAY_MAX_ITEMS", "8"), 8),
+        max_chars=gameplay_max_chars,
+        snippet_chars=260,
+        empty_text=context["gameplay"],
+    )
+    context["glossary"] = _format_retrieved_snippets(
+        rag,
+        strategy,
+        doc_type="glossary",
+        top_k_per_variant=_safe_positive_int(os.getenv("MKM_STRUCTURED_GLOSSARY_TOP_K", "8"), 8),
+        min_similarity=0.18,
+        max_items=_safe_positive_int(os.getenv("MKM_STRUCTURED_GLOSSARY_MAX_ITEMS", "8"), 8),
+        max_chars=glossary_max_chars,
+        snippet_chars=240,
+        empty_text=context["glossary"],
+    )
     
     return context
 
@@ -654,27 +706,64 @@ async def suggest_team_json(
 
         return team
 
-    def _team_has_content(team: Dict[str, object]) -> bool:
-        if str(team.get("strategy", "")).strip():
-            return True
+    def _enforce_team_output_format(team: Dict[str, object]) -> Optional[Dict[str, object]]:
+        if not isinstance(team, dict):
+            return None
 
-        for key in ["char1", "char2", "char3"]:
-            char = team.get(key)
-            if isinstance(char, dict) and str(char.get("name", "")).strip():
-                return True
+        strategy_text = str(team.get("strategy", "")).strip()
+        if not strategy_text:
+            return None
 
-        return False
+        normalized_team: Dict[str, object] = {"strategy": strategy_text}
 
-    def _looks_like_structured_blob(text: str) -> bool:
-        t = (text or "").strip()
-        if not t:
-            return False
-        if "{" in t and "}" in t:
-            low = t.lower()
-            for marker in ["\"name\"", "'name'", "char1", "equipment", "weapons", "armor", "accessories"]:
-                if marker in low:
-                    return True
-        return False
+        for idx in range(1, 4):
+            key = f"char{idx}"
+            raw_char = team.get(key)
+            if not isinstance(raw_char, dict):
+                return None
+
+            name = str(raw_char.get("name", "")).strip()
+            if not name:
+                return None
+
+            rarity = str(raw_char.get("rarity", "")).strip()
+            passive = str(raw_char.get("passive", "")).strip()
+
+            raw_equipment = raw_char.get("equipment")
+            if not isinstance(raw_equipment, list):
+                return None
+
+            by_slot: Dict[str, Dict[str, str]] = {}
+            for item in raw_equipment:
+                if not isinstance(item, dict):
+                    continue
+                slot = str(item.get("slot", "")).strip().lower()
+                if slot not in {"weapon", "armor", "accessory"}:
+                    continue
+                if slot in by_slot:
+                    continue
+
+                eq_name = str(item.get("name", "")).strip()
+                if not eq_name:
+                    continue
+                effect = str(item.get("effect", "")).strip()
+                by_slot[slot] = {"slot": slot, "name": eq_name, "effect": effect}
+
+            if set(by_slot.keys()) != {"weapon", "armor", "accessory"}:
+                return None
+
+            normalized_team[key] = {
+                "name": name,
+                "rarity": rarity,
+                "passive": passive,
+                "equipment": [
+                    by_slot["weapon"],
+                    by_slot["armor"],
+                    by_slot["accessory"],
+                ],
+            }
+
+        return normalized_team
 
     try:
         rag = get_rag_system()
@@ -783,7 +872,8 @@ Respond with ONLY this JSON structure:
             try:
                 team_data = json.loads(response_text)
                 team_data = _normalize_team_payload(team_data)
-                if _team_has_content(team_data):
+                team_data = _enforce_team_output_format(team_data)
+                if team_data:
                     return {"response": team_data}
             except json.JSONDecodeError as e:
                 # Try to extract JSON from the response
@@ -795,7 +885,8 @@ Respond with ONLY this JSON structure:
 
                     py_obj = ast.literal_eval(response_text)
                     team_data = _normalize_team_payload(py_obj)
-                    if _team_has_content(team_data):
+                    team_data = _enforce_team_output_format(team_data)
+                    if team_data:
                         return {"response": team_data}
                 except Exception:
                     pass
@@ -809,7 +900,8 @@ Respond with ONLY this JSON structure:
                     try:
                         team_data = json.loads(json_str)
                         team_data = _normalize_team_payload(team_data)
-                        if _team_has_content(team_data):
+                        team_data = _enforce_team_output_format(team_data)
+                        if team_data:
                             return {"response": team_data}
                     except json.JSONDecodeError:
                         try:
@@ -817,28 +909,19 @@ Respond with ONLY this JSON structure:
 
                             py_obj = ast.literal_eval(json_str)
                             team_data = _normalize_team_payload(py_obj)
-                            if _team_has_content(team_data):
+                            team_data = _enforce_team_output_format(team_data)
+                            if team_data:
                                 return {"response": team_data}
                         except Exception:
                             pass
 
-                if response_text.strip():
-                    # Only map free-form text to strategy when it's not a malformed structured blob.
-                    if not _looks_like_structured_blob(response_text):
-                        return {
-                            "response": {
-                                "strategy": response_text.strip(),
-                            }
-                        }
-                
-                # Return raw response if JSON parsing fails
                 return {
-                    "error": "Failed to parse JSON response",
+                    "error": "Failed to parse model output into required team JSON schema",
                     "raw_response": response_text
                 }
 
             return {
-                "error": "Model returned JSON but no usable team content.",
+                "error": "Model returned JSON but not in required team schema.",
                 "raw_response": response_text,
             }
                 
@@ -859,7 +942,15 @@ async def ask_question_json(question: str, model: Optional[str] = None) -> dict:
         # Use a resolved model tag for consistency with other endpoints.
         use_model = assistant._resolve_model_name(model)
 
-        context = build_structured_context(rag, question)
+        context = build_structured_context(
+            rag,
+            question,
+            character_limit=_safe_positive_int(os.getenv("MKM_ASK_CHAR_LIMIT", "22"), 22),
+            equipment_limit=_safe_positive_int(os.getenv("MKM_ASK_EQUIP_LIMIT", "24"), 24),
+            passive_max_chars=_safe_positive_int(os.getenv("MKM_ASK_PASSIVE_MAX_CHARS", "420"), 420),
+            gameplay_max_chars=_safe_positive_int(os.getenv("MKM_ASK_GAMEPLAY_MAX_CHARS", "1200"), 1200),
+            glossary_max_chars=_safe_positive_int(os.getenv("MKM_ASK_GLOSSARY_MAX_CHARS", "1200"), 1200),
+        )
 
         system_prompt = f"""You are a knowledgeable Mortal Kombat Mobile game assistant.
 

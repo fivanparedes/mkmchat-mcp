@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from typing import Awaitable, Callable
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -26,6 +27,54 @@ logger = logging.getLogger(__name__)
 
 # Initialize MCP server
 app = Server("mkmchat")
+
+ToolHandler = Callable[[dict], Awaitable[dict]]
+
+
+def _tool_handlers() -> dict[str, ToolHandler]:
+    return {
+        "get_character_info": lambda arguments: get_character_info(arguments["character_name"]),
+        "get_equipment_info": lambda arguments: get_equipment_info(arguments["equipment_name"]),
+        "suggest_team": lambda arguments: suggest_team(
+            strategy=arguments["strategy"],
+            owned_characters=arguments.get("owned_characters"),
+            required_character=arguments.get("required_character"),
+        ),
+        "semantic_search": lambda arguments: semantic_search(
+            query=arguments["query"],
+            top_k=arguments.get("top_k", 5),
+            doc_type=arguments.get("doc_type"),
+            min_similarity=arguments.get("min_similarity", 0.3),
+        ),
+        "search_characters_advanced": lambda arguments: search_characters_advanced(
+            rarity=arguments.get("rarity"),
+            char_class=arguments.get("char_class"),
+            tier=arguments.get("tier"),
+            keyword=arguments.get("keyword"),
+        ),
+        "search_equipment_advanced": lambda arguments: search_equipment_advanced(
+            rarity=arguments.get("rarity"),
+            equip_type=arguments.get("equip_type"),
+            tier=arguments.get("tier"),
+            keyword=arguments.get("keyword"),
+        ),
+        "ask_ollama": lambda arguments: ask_ollama(
+            question=arguments["question"],
+            use_context=arguments.get("use_context", True),
+        ),
+        "compare_characters_ollama": lambda arguments: compare_characters_ollama(
+            character1=arguments["character1"],
+            character2=arguments["character2"],
+        ),
+        "suggest_team_ollama": lambda arguments: suggest_team_ollama(
+            strategy=arguments["strategy"],
+            owned_characters=arguments.get("owned_characters"),
+        ),
+        "explain_mechanic_ollama": lambda arguments: explain_mechanic_ollama(
+            mechanic=arguments["mechanic"],
+            model=arguments.get("model"),
+        ),
+    }
 
 
 @app.list_tools()
@@ -254,59 +303,12 @@ async def call_tool(name: str, arguments: dict):
     logger.info(f"Tool called: {name} with arguments: {arguments}")
     
     try:
-        if name == "get_character_info":
-            return await get_character_info(arguments["character_name"])
-        elif name == "get_equipment_info":
-            return await get_equipment_info(arguments["equipment_name"])
-        elif name == "suggest_team":
-            return await suggest_team(
-                strategy=arguments["strategy"],
-                owned_characters=arguments.get("owned_characters"),
-                required_character=arguments.get("required_character")
-            )
-        elif name == "semantic_search":
-            return await semantic_search(
-                query=arguments["query"],
-                top_k=arguments.get("top_k", 5),
-                doc_type=arguments.get("doc_type"),
-                min_similarity=arguments.get("min_similarity", 0.3)
-            )
-        elif name == "search_characters_advanced":
-            return await search_characters_advanced(
-                rarity=arguments.get("rarity"),
-                char_class=arguments.get("char_class"),
-                tier=arguments.get("tier"),
-                keyword=arguments.get("keyword")
-            )
-        elif name == "search_equipment_advanced":
-            return await search_equipment_advanced(
-                rarity=arguments.get("rarity"),
-                equip_type=arguments.get("equip_type"),
-                tier=arguments.get("tier"),
-                keyword=arguments.get("keyword")
-            )
-        elif name == "ask_ollama":
-            return await ask_ollama(
-                question=arguments["question"],
-                use_context=arguments.get("use_context", True)
-            )
-        elif name == "compare_characters_ollama":
-            return await compare_characters_ollama(
-                character1=arguments["character1"],
-                character2=arguments["character2"]
-            )
-        elif name == "suggest_team_ollama":
-            return await suggest_team_ollama(
-                strategy=arguments["strategy"],
-                owned_characters=arguments.get("owned_characters")
-            )
-        elif name == "explain_mechanic_ollama":
-            return await explain_mechanic_ollama(
-                mechanic=arguments["mechanic"],
-                model=arguments.get("model")
-            )
-        else:
+        handlers = _tool_handlers()
+        handler = handlers.get(name)
+        if not handler:
             raise ValueError(f"Unknown tool: {name}")
+
+        return await handler(arguments)
     except Exception as e:
         logger.error(f"Error executing tool {name}: {e}")
         return {

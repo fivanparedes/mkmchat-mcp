@@ -21,6 +21,21 @@ class _FakeRag:
         return self._results[:top_k]
 
 
+class _FakeTypedRag:
+    enabled = True
+
+    def __init__(self, by_type):
+        self._by_type = by_type
+
+    def search(self, query, top_k=10, doc_type=None, min_similarity=0.25):
+        if doc_type is None:
+            merged = []
+            for values in self._by_type.values():
+                merged.extend(values)
+            return merged[:top_k]
+        return self._by_type.get(doc_type, [])[:top_k]
+
+
 class _AssistantOK:
     enabled = True
 
@@ -102,6 +117,34 @@ def test_mechanic_rag_context_respects_budget(monkeypatch):
     assert "=== RAG" in context
     assert context.count("### [") <= 4
     assert len(context) < 1600
+
+
+def test_mechanic_rag_context_prioritizes_gameplay_and_glossary(monkeypatch):
+    assistant = _new_assistant_for_unit_tests()
+    assistant.rag_system = _FakeTypedRag(
+        {
+            "character": [(_FakeDoc("Character evidence", "character"), 0.99)],
+            "equipment": [(_FakeDoc("Equipment evidence", "equipment"), 0.98)],
+            "gameplay": [(_FakeDoc("Gameplay evidence", "gameplay"), 0.70)],
+            "glossary": [(_FakeDoc("Glossary evidence", "glossary"), 0.65)],
+        }
+    )
+
+    monkeypatch.setenv("MKM_MECHANIC_RAG_MAX_PASSAGES", "4")
+    monkeypatch.setenv("MKM_MECHANIC_RAG_MAX_CHARS", "2200")
+
+    context = assistant._build_mechanic_rag_context("power drain")
+    gameplay_idx = context.find("### [gameplay]")
+    glossary_idx = context.find("### [glossary]")
+    character_idx = context.find("### [character]")
+    equipment_idx = context.find("### [equipment]")
+
+    assert gameplay_idx != -1
+    assert glossary_idx != -1
+    assert character_idx != -1
+    assert equipment_idx != -1
+    assert gameplay_idx < character_idx
+    assert glossary_idx < equipment_idx
 
 
 @pytest.mark.asyncio

@@ -458,20 +458,44 @@ Answer:"""
                 seen_variants.add(key)
                 dedup_variants.append(v.strip())
 
+        type_priorities = {
+            "gameplay": 0,
+            "glossary": 0,
+            "character": 1,
+            "equipment": 1,
+        }
+        per_type_top_k = {
+            "gameplay": top_k,
+            "glossary": top_k,
+            "character": max(6, top_k // 2),
+            "equipment": max(6, top_k // 2),
+        }
+        per_type_min_similarity = {
+            "gameplay": 0.18,
+            "glossary": 0.18,
+            "character": 0.20,
+            "equipment": 0.20,
+        }
+
         results_pool: Dict[str, Tuple[object, float]] = {}
         for variant in (dedup_variants or [mechanic]):
-            for doc, score in self.rag_system.search(
-                variant,
-                top_k=top_k,
-                doc_type=None,
-                min_similarity=0.20,
-            ):
-                digest = hashlib.sha256(doc.content.strip().encode("utf-8")).hexdigest()
-                existing = results_pool.get(digest)
-                if not existing or score > existing[1]:
-                    results_pool[digest] = (doc, score)
+            for doc_type in ["gameplay", "glossary", "character", "equipment"]:
+                for doc, score in self.rag_system.search(
+                    variant,
+                    top_k=per_type_top_k[doc_type],
+                    doc_type=doc_type,
+                    min_similarity=per_type_min_similarity[doc_type],
+                ):
+                    digest = hashlib.sha256(doc.content.strip().encode("utf-8")).hexdigest()
+                    key = f"{doc.doc_type}:{digest}"
+                    existing = results_pool.get(key)
+                    if not existing or score > existing[1]:
+                        results_pool[key] = (doc, score)
 
-        results = sorted(results_pool.values(), key=lambda x: x[1], reverse=True)
+        results = sorted(
+            results_pool.values(),
+            key=lambda x: (type_priorities.get(x[0].doc_type, 2), -x[1]),
+        )
         seen_hashes: set[str] = set()
         parts: List[str] = []
         used_chars = 0
@@ -501,7 +525,7 @@ Answer:"""
 
         if not parts:
             return "=== RAG ===\nNo indexed passages matched strongly enough. Use general MK Mobile knowledge and say so if uncertain.\n"
-        return "=== RAG (characters, equipment, gameplay, glossary) ===\n" + "\n".join(parts)
+        return "=== RAG (prioritized: gameplay/glossary, then characters/equipment) ===\n" + "\n".join(parts)
 
     @staticmethod
     def _strip_json_fences(text: str) -> str:

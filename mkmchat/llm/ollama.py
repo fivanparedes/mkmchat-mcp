@@ -100,6 +100,47 @@ class OllamaAssistant:
                     logger.info(f"Available models: {', '.join(models) if models else 'none'}")
         except Exception as e:
             logger.error(f"Error checking model availability: {e}")
+
+    def _list_available_models(self) -> List[str]:
+        """Return model tags currently available in Ollama."""
+        try:
+            response = httpx.get(f"{self.base_url}/api/tags", timeout=5.0)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+        except Exception as e:
+            logger.debug(f"Unable to list Ollama models: {e}")
+            return []
+
+    def _resolve_model_name(self, requested_model: Optional[str]) -> str:
+        """
+        Resolve model names robustly:
+        - trim whitespace
+        - if exact tag exists, use it
+        - if no tag was provided (e.g. "deepseek-r1"), resolve to available "deepseek-r1:*"
+        """
+        model = (requested_model or self.model_name or "").strip()
+        if not model:
+            return "llama3.2:3b"
+
+        available = self._list_available_models()
+        if not available:
+            return model
+
+        if model in available:
+            return model
+
+        if ":" not in model:
+            prefix = f"{model}:"
+            candidates = [m for m in available if m.startswith(prefix)]
+            if candidates:
+                latest = f"{model}:latest"
+                resolved = latest if latest in candidates else candidates[0]
+                logger.info("Resolved Ollama model alias %s -> %s", model, resolved)
+                return resolved
+
+        return model
     
     def _build_system_context(self) -> str:
         """Build system context about MK Mobile game"""
@@ -397,14 +438,40 @@ Answer:"""
         max_passages = max(3, min(16, max_passages))
 
         try:
-            max_chars = int(os.getenv("MKM_MECHANIC_RAG_MAX_CHARS", "2400"))
+            max_chars = int(os.getenv("MKM_MECHANIC_RAG_MAX_CHARS", "3600"))
         except ValueError:
-            max_chars = 2400
-        max_chars = max(800, min(12000, max_chars))
+            max_chars = 3600
+        max_chars = max(1200, min(18000, max_chars))
 
-        results = self.rag_system.search(
-            mechanic, top_k=top_k, doc_type=None, min_similarity=0.25
-        )
+        variants = [mechanic.strip()] if mechanic and mechanic.strip() else []
+        lowered = mechanic.lower() if mechanic else ""
+        if "classic" in lowered and "klassic" not in lowered:
+            variants.append(re.sub(r"\bclassic\b", "klassic", mechanic, flags=re.IGNORECASE))
+        if "klassic" in lowered and "classic" not in lowered:
+            variants.append(re.sub(r"\bklassic\b", "classic", mechanic, flags=re.IGNORECASE))
+
+        dedup_variants: List[str] = []
+        seen_variants: set[str] = set()
+        for v in variants:
+            key = v.strip().lower()
+            if key and key not in seen_variants:
+                seen_variants.add(key)
+                dedup_variants.append(v.strip())
+
+        results_pool: Dict[str, Tuple[object, float]] = {}
+        for variant in (dedup_variants or [mechanic]):
+            for doc, score in self.rag_system.search(
+                variant,
+                top_k=top_k,
+                doc_type=None,
+                min_similarity=0.20,
+            ):
+                digest = hashlib.sha256(doc.content.strip().encode("utf-8")).hexdigest()
+                existing = results_pool.get(digest)
+                if not existing or score > existing[1]:
+                    results_pool[digest] = (doc, score)
+
+        results = sorted(results_pool.values(), key=lambda x: x[1], reverse=True)
         seen_hashes: set[str] = set()
         parts: List[str] = []
         used_chars = 0
@@ -423,10 +490,8 @@ Answer:"""
                 f"### [{doc.doc_type}] (score {score:.3f}) metadata={meta}\n{doc.content}\n"
             )
             if used_chars + len(snippet) > max_chars:
-                remaining = max_chars - used_chars
-                if remaining <= 220:
-                    break
-                snippet = snippet[:remaining].rstrip() + "\n..."
+                # Preserve passage integrity: skip passages that do not fit instead of clipping.
+                continue
 
             parts.append(snippet)
             used_chars += len(snippet)
@@ -598,7 +663,7 @@ Answer:"""
         if not self.enabled:
             return {"error": "Ollama assistant not available."}
 
-        use_model = model or self.model_name
+        use_model = self._resolve_model_name(model)
         context = self._build_mechanic_rag_context(mechanic)
 
         system_prompt = f"""{self.system_context}
@@ -641,6 +706,16 @@ Produce the JSON for this mechanic."""
                 )
 
                 if response.status_code != 200:
+                    detail = ""
+                    try:
+                        detail = str(response.json().get("error", "")).strip()
+                    except Exception:
+                        detail = (response.text or "").strip()
+                    detail = re.sub(r"\s+", " ", detail)[:300]
+                    if detail:
+                        return {
+                            "error": f"Ollama API returned status {response.status_code}: {detail}"
+                        }
                     return {"error": f"Ollama API returned status {response.status_code}"}
 
                 result = response.json()

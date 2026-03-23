@@ -26,6 +26,9 @@ $logout = function (Logout $logout): void {
                     <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')" wire:navigate>
                         {{ __('Team Suggest') }}
                     </x-nav-link>
+                    <x-nav-link :href="route('chat')" :active="request()->routeIs('chat')" wire:navigate>
+                        {{ __('Chat') }}
+                    </x-nav-link>
                     <x-nav-link :href="route('history')" :active="request()->routeIs('history')" wire:navigate>
                         {{ __('History') }}
                     </x-nav-link>
@@ -93,6 +96,9 @@ $logout = function (Logout $logout): void {
         <div class="pt-2 pb-3 space-y-1">
             <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')" wire:navigate>
                 {{ __('Team Suggest') }}
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('chat')" :active="request()->routeIs('chat')" wire:navigate>
+                {{ __('Chat') }}
             </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('history')" :active="request()->routeIs('history')" wire:navigate>
                 {{ __('History') }}

@@ -40,6 +40,16 @@ class LlmModelSeeder extends Seeder
                 'created_at'     => now(),
                 'updated_at'     => now(),
             ],
+            [
+                'name'           => 'DeepSeek R1 14B (Low Memory)',
+                'slug'           => 'deepseek-r1:14b-fit',
+                'parameter_size' => '14b',
+                'provider'       => 'ollama',
+                'description'    => 'DeepSeek R1 Distill 14B tuned for constrained RAM (num_ctx=512, num_batch=32, use_mmap=true).',
+                'is_active'      => true,
+                'created_at'     => now(),
+                'updated_at'     => now(),
+            ],
         ];
 
         foreach ($models as $model) {

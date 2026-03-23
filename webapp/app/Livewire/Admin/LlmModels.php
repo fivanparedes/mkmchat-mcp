@@ -69,9 +69,18 @@ class LlmModels extends Component
     {
         Gate::authorize('manage-llm-models');
 
+        $this->slug = trim($this->slug);
+
         $rules = [
             'name'          => ['required', 'string', 'max:255'],
-            'slug'          => ['required', 'string', 'max:255', 'unique:llm_models,slug,' . ($this->editingId ?? 'NULL')],
+            'slug'          => [
+                'required',
+                'string',
+                'max:255',
+                // Ollama tags should be explicit, e.g. deepseek-r1:32b or qwen2.5:7b-instruct.
+                'regex:/^[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*$/',
+                'unique:llm_models,slug,' . ($this->editingId ?? 'NULL')
+            ],
             'parameterSize' => ['nullable', 'string', 'max:20'],
             'provider'      => ['required', 'string', 'max:50'],
             'description'   => ['nullable', 'string', 'max:1000'],

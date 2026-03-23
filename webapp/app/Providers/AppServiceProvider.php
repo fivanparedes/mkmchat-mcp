@@ -26,6 +26,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::define('ask-question', fn ($user) => (bool) $user);
         Gate::define('suggest-team', fn ($user) => (bool) $user);
         Gate::define('explain-mechanic', fn ($user) => (bool) $user);
+        Gate::define('chat', fn ($user) => (bool) $user);
         Gate::define('manage-llm-models', fn ($user) => $user?->isAdmin() === true);
 
         RateLimiter::for('ai-actions', function (Request $request) {

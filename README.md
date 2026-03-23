@@ -50,6 +50,26 @@ At minimum, ensure these match where required:
 docker compose up -d --build
 ```
 
+Resource note for larger Ollama models (for example `deepseek-r1:32b`):
+- Docker Desktop memory must be raised well above the model size (recommendation: at least 24 GB).
+- GPU support must be enabled for Docker Desktop + NVIDIA Container Toolkit/WSL integration.
+- If Docker reports total memory less than it really needs, Ollama will run CPU-only and large models will fail to load.
+
+With the help of GPT 5.3-Codex, deployed a distilled DeepSeek R1:14b model:
+```bash
+docker compose exec ollama sh -lc "cat > /tmp/Modelfile.deepseek14b-fit << 'EOF'
+FROM deepseek-r1:14b
+PARAMETER num_ctx 512
+PARAMETER num_batch 32
+PARAMETER num_predict 800
+PARAMETER use_mmap true
+PARAMETER temperature 0.2
+EOF
+ollama create deepseek-r1:14b-fit -f /tmp/Modelfile.deepseek14b-fit"
+```
+
+Then select `deepseek-r1:14b-fit` in the webapp model list.
+
 ### 4) Endpoints
 
 - Web app: `http://localhost:8000`

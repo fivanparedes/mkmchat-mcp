@@ -48,10 +48,23 @@ class User extends Authenticatable
         return $this->hasMany(QueryHistory::class);
     }
 
+    public function conversations(): HasMany
+    {
+        return $this->hasMany(Conversation::class);
+    }
+
     public function todayQueryCount(): int
     {
-        return $this->queryHistories()
+        $queryHistoryCount = $this->queryHistories()
             ->whereDate('created_at', today())
             ->count();
+
+        $chatCount = ConversationMessage::query()
+            ->whereHas('conversation', fn ($query) => $query->where('user_id', $this->id))
+            ->where('role', 'user')
+            ->whereDate('created_at', today())
+            ->count();
+
+        return $queryHistoryCount + $chatCount;
     }
 }

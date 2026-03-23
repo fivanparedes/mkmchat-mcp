@@ -184,6 +184,79 @@ class MkmApiService
     }
 
     /**
+     * Send one chat turn and receive the assistant response.
+     *
+     * @param  array<int, array{role: string, content: string}>  $messages
+     * @return array{text: string, summary_text: ?string, summary_message_count: int}
+     *
+     * @throws RuntimeException
+     */
+    public function chat(
+        string $message,
+        array $messages,
+        ?string $conversationSummary,
+        int $summaryMessageCount,
+        ?string $model = null,
+    ): array {
+        $payload = [
+            'message' => $message,
+            'messages' => $messages,
+            'summary_text' => $conversationSummary,
+            'summary_message_count' => max(0, $summaryMessageCount),
+        ];
+
+        if ($model) {
+            $payload['model'] = $model;
+        }
+
+        try {
+            set_time_limit(0);
+
+            $response = $this->httpRequest()->timeout($this->httpTimeoutSeconds())
+                ->post("{$this->baseUrl}/chat", $payload);
+        } catch (RequestException $e) {
+            throw new RuntimeException(
+                $this->pythonApiConnectionMessage($e),
+                0,
+                $e
+            );
+        }
+
+        $body = $response->json();
+
+        if ($response->failed() || isset($body['error'])) {
+            throw new RuntimeException($body['error'] ?? "API returned HTTP {$response->status()}");
+        }
+
+        if (!isset($body['response']) || !is_array($body['response'])) {
+            throw new RuntimeException('Unexpected API response shape: missing "response" object.');
+        }
+
+        $inner = $body['response'];
+        $text = isset($inner['text']) && is_string($inner['text'])
+            ? trim($inner['text'])
+            : '';
+
+        if ($text === '') {
+            throw new RuntimeException('API returned success but no chat response text was provided.');
+        }
+
+        $summaryText = isset($inner['summary_text']) && is_string($inner['summary_text'])
+            ? trim($inner['summary_text'])
+            : null;
+
+        $newSummaryCount = isset($inner['summary_message_count'])
+            ? max(0, (int) $inner['summary_message_count'])
+            : max(0, $summaryMessageCount);
+
+        return [
+            'text' => $text,
+            'summary_text' => $summaryText,
+            'summary_message_count' => $newSummaryCount,
+        ];
+    }
+
+    /**
      * @param  mixed  $response
      * @return array<string, mixed>
      */
@@ -198,16 +271,40 @@ class MkmApiService
                 $response['strategy'] = (string) $response['text'];
             }
 
+            foreach (['team', 'characters'] as $sourceKey) {
+                if (!isset($response[$sourceKey]) || !is_array($response[$sourceKey])) {
+                    continue;
+                }
+
+                $items = array_values(array_filter(
+                    $response[$sourceKey],
+                    static fn ($item) => is_array($item)
+                ));
+
+                for ($i = 0; $i < 3 && $i < count($items); $i++) {
+                    $slot = 'char' . ($i + 1);
+                    if (!isset($response[$slot]) || !is_array($response[$slot])) {
+                        $response[$slot] = $items[$i];
+                    }
+                }
+            }
+
             return $response;
         }
 
         if (is_string($response) && trim($response) !== '') {
-            $decoded = json_decode($response, true);
+            $trimmed = trim($response);
+            $decoded = json_decode($trimmed, true);
             if (is_array($decoded)) {
                 return $this->normalizeTeamResponse($decoded);
             }
 
-            return ['strategy' => trim($response)];
+            // Do not surface malformed JSON-like blobs as team strategy text.
+            if (str_starts_with($trimmed, '{') || str_starts_with($trimmed, '[')) {
+                return [];
+            }
+
+            return ['strategy' => $trimmed];
         }
 
         return [];

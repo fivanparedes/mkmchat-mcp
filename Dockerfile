@@ -15,6 +15,17 @@ RUN ln -s /app/mkmchat/data /app/data
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e .
 
+RUN addgroup --system appgroup \
+    && adduser --system --ingroup appgroup appuser \
+    && mkdir -p /app/.cache/huggingface \
+    && chown -R appuser:appgroup /app
+
+ENV HOME=/app \
+    HF_HOME=/app/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/app/.cache/huggingface/hub
+
+USER appuser
+
 EXPOSE 8080
 
 CMD ["python", "-m", "mkmchat", "http", "8080"]

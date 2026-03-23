@@ -39,9 +39,10 @@ cp webapp/.env.docker.example webapp/.env.docker
 
 At minimum, ensure these match where required:
 
-- `MKM_API_KEY` (same value in `.env.docker` and `webapp/.env.docker`)
+- `MKM_API_KEY` (same strong random value in `.env.docker` and `webapp/.env.docker`; do not use placeholders)
 - `MKM_API_KEY_HEADER` (same value in both files)
 - `OLLAMA_MODEL` (for example `llama3.2:3b`)
+- `APP_ENV` / `APP_DEBUG` (`production` + `false` for safest default)
 
 ### 3) Start the stack
 
@@ -52,8 +53,9 @@ docker compose up -d --build
 ### 4) Endpoints
 
 - Web app: `http://localhost:8000`
-- Python API: `http://localhost:8080`
 - Ollama: `http://localhost:11434`
+
+Security default: the Python API is internal-only inside the Docker network and is not published to the host.
 
 ### 5) Useful commands
 
@@ -121,6 +123,7 @@ Python API limits:
 - `MKM_RATE_LIMIT_BURST`
 - `MKM_RATE_LIMIT_BURST_WINDOW_SECONDS`
 - `MKM_HTTP_TIMEOUT_SECONDS`
+- `MKM_DEBUG_PROMPTS` (`false` by default; when `true`, prompt debug logs are written with basic redaction)
 
 Explain Mechanic tuning (new):
 - `MKM_MECHANIC_RAG_TOP_K`
@@ -153,13 +156,24 @@ Both now include:
 - `MKM_DAILY_LIMIT`
 - `MKM_WEB_RATE_LIMIT_PER_MINUTE`
 
-## Quick API smoke test
+## Quick API smoke test (secure default)
 
 ```bash
-curl -X POST http://localhost:8080/explain-mechanic \
+docker compose exec webapp curl -X POST http://python-api:8080/explain-mechanic \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: change-me-in-production" \
+  -H "X-API-Key: <your-strong-api-key>" \
   -d '{"mechanic":"power drain","model":"llama3.2:3b"}'
+```
+
+If you explicitly need host access to the Python API for debugging, add a temporary port mapping to `python-api` in `docker-compose.yml`, then remove it after testing.
+
+## Health endpoint note
+
+`/health` is protected by API key auth. Query it from inside the Docker network, for example:
+
+```bash
+docker compose exec webapp curl http://python-api:8080/health \
+  -H "X-API-Key: <your-strong-api-key>"
 ```
 
 ## License

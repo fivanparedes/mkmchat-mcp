@@ -78,7 +78,7 @@
                 &#128172; Answer
             </h3>
             <div class="mk-prose">
-                {!! Str::markdown($result) !!}
+                {!! \App\Support\SafeMarkdown::render($result) !!}
             </div>
         </div>
     @endif

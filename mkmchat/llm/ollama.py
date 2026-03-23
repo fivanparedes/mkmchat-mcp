@@ -20,6 +20,14 @@ from mkmchat.data.rag import RAGSystem
 logger = logging.getLogger(__name__)
 
 
+def _http_timeout_seconds(default: int = 120) -> int:
+    try:
+        value = int(os.getenv("MKM_HTTP_TIMEOUT_SECONDS", str(default)))
+        return max(10, value)
+    except ValueError:
+        return default
+
+
 class OllamaAssistant:
     """Ollama-powered assistant for MK Mobile game queries"""
     
@@ -232,7 +240,7 @@ Answer:"""
                             "num_predict": max_tokens
                         }
                     },
-                    timeout=None  # No timeout - wait for response
+                    timeout=_http_timeout_seconds()
                 )
                 
                 if response.status_code != 200:
@@ -293,7 +301,7 @@ Answer:"""
                         "prompt": prompt,
                         "stream": False
                     },
-                    timeout=None  # No timeout - wait for response
+                    timeout=_http_timeout_seconds()
                 )
                 
                 result = response.json()
@@ -361,7 +369,7 @@ Answer:"""
                         "prompt": prompt,
                         "stream": False
                     },
-                    timeout=None  # No timeout - wait for response
+                    timeout=_http_timeout_seconds()
                 )
                 
                 result = response.json()
@@ -629,7 +637,7 @@ Produce the JSON for this mechanic."""
                             "num_predict": int(os.getenv("MKM_MECHANIC_NUM_PREDICT", "1200")),
                         },
                     },
-                    timeout=None,
+                    timeout=_http_timeout_seconds(),
                 )
 
                 if response.status_code != 200:

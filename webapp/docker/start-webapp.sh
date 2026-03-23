@@ -58,6 +58,20 @@ fi
 php artisan config:clear --ansi || true
 php artisan cache:clear --ansi || true
 
+APP_ENV_VALUE="$(grep '^APP_ENV=' .env | cut -d= -f2- || true)"
+APP_DEBUG_VALUE="$(grep '^APP_DEBUG=' .env | cut -d= -f2- || true)"
+MKM_API_KEY_VALUE="$(grep '^MKM_API_KEY=' .env | cut -d= -f2- || true)"
+
+if [ "$APP_ENV_VALUE" != "local" ] && [ "$APP_DEBUG_VALUE" = "true" ]; then
+  echo "Refusing to start: APP_DEBUG=true is not allowed when APP_ENV is not local."
+  exit 1
+fi
+
+if [ -z "$MKM_API_KEY_VALUE" ] || [ "$MKM_API_KEY_VALUE" = "change-me-in-production" ] || [ "$MKM_API_KEY_VALUE" = "replace-with-long-random-secret" ]; then
+  echo "Refusing to start: MKM_API_KEY must be set to a strong non-placeholder value."
+  exit 1
+fi
+
 if ! grep -q '^APP_KEY=base64:' .env; then
   php artisan key:generate --force
 fi

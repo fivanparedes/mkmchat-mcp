@@ -5,8 +5,9 @@ import hmac
 import json
 import logging
 import os
+import re
 from collections import defaultdict, deque
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from time import monotonic
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, List, Dict
@@ -23,6 +24,28 @@ DEFAULT_PORT = 8080
 
 _IP_REQUESTS = defaultdict(deque)
 _IP_BURST_REQUESTS = defaultdict(deque)
+
+
+def _get_http_timeout_seconds() -> int:
+    try:
+        value = int(os.getenv("MKM_HTTP_TIMEOUT_SECONDS", "120"))
+        return max(10, value)
+    except ValueError:
+        return 120
+
+
+def _debug_prompts_enabled() -> bool:
+    return os.getenv("MKM_DEBUG_PROMPTS", "false").strip().lower() == "true"
+
+
+def _redact_sensitive_text(text: str) -> str:
+    redacted = re.sub(
+        r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s\n,;]+)",
+        r"\1=[REDACTED]",
+        text,
+    )
+    redacted = re.sub(r"(?i)(bearer\s+)([A-Za-z0-9._\-]+)", r"\1[REDACTED]", redacted)
+    return redacted
 
 
 def build_structured_context(rag, strategy: str) -> Dict[str, str]:
@@ -186,13 +209,14 @@ Respond with ONLY this JSON structure:
 === AVAILABLE ACCESSORIES ===
 {context['accessories']}"""
 
-        # Log prompt and context to file (overwrite each call)
-        from pathlib import Path
-        log_file = Path(__file__).resolve().parent / "prompt_debug.log"
-        with open(log_file, 'w', encoding='utf-8') as f:
-            f.write(f"=== SYSTEM PROMPT ===\n{system_prompt}\n\n")
-            f.write(f"=== USER PROMPT ===\n{user_prompt}\n")
-        logger.info(f"Prompt debug log written to: {log_file}")
+        if _debug_prompts_enabled():
+            from pathlib import Path
+
+            log_file = Path(__file__).resolve().parent / "prompt_debug.log"
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== SYSTEM PROMPT ===\n{_redact_sensitive_text(system_prompt)}\n\n")
+                f.write(f"=== USER PROMPT ===\n{_redact_sensitive_text(user_prompt)}\n")
+            logger.info(f"Prompt debug log written to: {log_file}")
 
         import httpx
         
@@ -211,7 +235,7 @@ Respond with ONLY this JSON structure:
                         "num_predict": 2000
                     }
                 },
-                timeout=None
+                timeout=_get_http_timeout_seconds()
             )
             
             if response.status_code != 200:
@@ -307,7 +331,7 @@ async def ask_question_json(question: str, model: Optional[str] = None) -> dict:
                         "num_predict": 1500
                     }
                 },
-                timeout=None
+                timeout=_get_http_timeout_seconds()
             )
 
             if response.status_code != 200:
@@ -516,6 +540,8 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
             }
             self.wfile.write(json.dumps(response, indent=2).encode())
         elif parsed_path.path == "/health":
+            if not self._check_api_auth():
+                return
             self._handle_health()
         else:
             self._set_headers(404)
@@ -574,10 +600,15 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
 
             self._set_headers(200)
             self.wfile.write(json.dumps(health, indent=2).encode())
+        except BrokenPipeError:
+            logger.warning("Client disconnected before /health response could be written")
         except Exception as e:
             logger.error(f"Error handling /health: {e}")
-            self._set_headers(500)
-            self.wfile.write(json.dumps({"status": "error", "detail": str(e)}).encode())
+            try:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"status": "error", "detail": str(e)}).encode())
+            except BrokenPipeError:
+                logger.warning("Client disconnected before /health error response could be written")
     
     def _handle_suggest_team(self):
         """Handle /suggest-team endpoint"""
@@ -742,8 +773,13 @@ class MKMobileHTTPHandler(BaseHTTPRequestHandler):
 def run_server(port: int = DEFAULT_PORT):
     """Run the HTTP server"""
     host = os.getenv("MKM_HTTP_HOST", "127.0.0.1")
+    api_key = os.getenv("MKM_API_KEY", "").strip()
+    if not api_key or api_key in {"change-me-in-production", "replace-with-long-random-secret"}:
+        raise RuntimeError("Refusing to start: set MKM_API_KEY to a strong non-placeholder value")
+
     server_address = (host, port)
-    httpd = HTTPServer(server_address, MKMobileHTTPHandler)
+    httpd = ThreadingHTTPServer(server_address, MKMobileHTTPHandler)
+    httpd.daemon_threads = True
     
     logger.info(f"Starting MK Mobile HTTP API server on {host}:{port}")
     logger.info(f"API endpoint: http://{host}:{port}/suggest-team")

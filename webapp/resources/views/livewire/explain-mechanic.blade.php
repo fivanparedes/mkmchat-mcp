@@ -74,13 +74,13 @@
             <div class="mk-card p-4 sm:p-8">
                 <h3 class="text-base font-semibold text-mk-fire mb-4">Definition</h3>
                 <div class="mk-prose">
-                    {!! Str::markdown($result['definition'] ?? '') !!}
+                    {!! \App\Support\SafeMarkdown::render($result['definition'] ?? '') !!}
                 </div>
             </div>
             <div class="mk-card p-4 sm:p-8">
                 <h3 class="text-base font-semibold text-mk-fire mb-4">Recommendations</h3>
                 <div class="mk-prose">
-                    {!! Str::markdown($result['recommendations'] ?? '') !!}
+                    {!! \App\Support\SafeMarkdown::render($result['recommendations'] ?? '') !!}
                 </div>
             </div>
         </div>

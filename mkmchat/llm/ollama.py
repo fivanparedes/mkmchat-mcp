@@ -20,6 +20,20 @@ from mkmchat.data.rag import RAGSystem
 logger = logging.getLogger(__name__)
 
 
+def _debug_prompts_enabled() -> bool:
+    return os.getenv("MKM_DEBUG_PROMPTS", "false").strip().lower() == "true"
+
+
+def _redact_sensitive_text(text: str) -> str:
+    redacted = re.sub(
+        r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s\n,;]+)",
+        r"\1=[REDACTED]",
+        text,
+    )
+    redacted = re.sub(r"(?i)(bearer\s+)([A-Za-z0-9._\-]+)", r"\1[REDACTED]", redacted)
+    return redacted
+
+
 def _http_timeout_seconds(default: int = 120) -> int:
     try:
         value = int(os.getenv("MKM_HTTP_TIMEOUT_SECONDS", str(default)))
@@ -74,6 +88,32 @@ class OllamaAssistant:
         self.system_context = self._build_system_context()
         
         logger.info(f"Ollama assistant initialized with model: {model_name}")
+
+    def _log_debug_interaction(self, tag: str, system_prompt: str, user_prompt: str, response_text: str):
+        """Log LLM interaction for debugging purposes if enabled."""
+        if not _debug_prompts_enabled():
+            return
+
+        from pathlib import Path
+        from datetime import datetime
+
+        try:
+            log_file = Path(__file__).resolve().parent / "debug_llm.log"
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f"\n{'='*80}\n")
+                f.write(f"TIMESTAMP: {timestamp} | TAG: {tag}\n")
+                f.write(f"{'-'*80}\n")
+                f.write(f"SYSTEM PROMPT:\n{_redact_sensitive_text(system_prompt)}\n")
+                f.write(f"{'-'*80}\n")
+                f.write(f"USER PROMPT / QUERY:\n{_redact_sensitive_text(user_prompt)}\n")
+                f.write(f"{'-'*80}\n")
+                f.write(f"LLM RESPONSE:\n{response_text}\n")
+                f.write(f"{'='*80}\n")
+            logger.debug(f"Debug interaction logged to: {log_file}")
+        except Exception as e:
+            logger.error(f"Failed to write debug log: {e}")
     
     def _check_ollama(self) -> bool:
         """Check if Ollama is running"""
@@ -208,19 +248,22 @@ Always base your answers on factual game data when possible, and clearly indicat
         # Add specific data if query mentions characters/equipment
         query_lower = query.lower()
         
-        # Check for character mentions
-        if any(word in query_lower for word in ["character", "fighter", "scorpion", "sub-zero", "raiden", "liu kang"]):
-            try:
-                # Get a sample of characters
-                self.data_loader.load_all()
-                chars = list(self.data_loader._characters.values())[:10]
-                if chars:
+        # Check for character mentions — use public API, no hardcoded names
+        try:
+            all_chars = self.data_loader.get_all_characters()
+            # Check if any known character name appears in the query
+            char_hit = any(
+                char.name.lower() in query_lower
+                for char in all_chars
+            )
+            if char_hit or any(w in query_lower for w in ["character", "fighter", "team"]):
+                if all_chars:
                     context_parts.append("=== Sample Characters ===")
-                    for char in chars[:5]:
-                        context_parts.append(f"- {char.name} ({char.char_class}, {char.rarity})")
-                    context_parts.append(f"Total characters available: {len(self.data_loader._characters)}\n")
-            except Exception as e:
-                logger.error(f"Error loading characters: {e}")
+                    for char in all_chars[:5]:
+                        context_parts.append(f"- {char.name} ({char.class_type}, {char.rarity})")
+                    context_parts.append(f"Total characters available: {len(all_chars)}\n")
+        except Exception as e:
+            logger.error(f"Error loading characters: {e}")
         
         return "\n".join(context_parts) if context_parts else ""
     
@@ -729,6 +772,8 @@ Produce the JSON for this mechanic."""
                     timeout=_http_timeout_seconds(),
                 )
 
+                self._log_debug_interaction("EXPLAIN_MECHANIC", system_prompt, user_prompt, response.text)
+                
                 if response.status_code != 200:
                     detail = ""
                     try:
@@ -789,8 +834,17 @@ _ollama_assistant: Optional[OllamaAssistant] = None
 def get_ollama_assistant(
     rag_system: Optional[RAGSystem] = None
 ) -> OllamaAssistant:
-    """Get or create Ollama assistant singleton"""
+    """Get or create the Ollama assistant singleton.
+
+    If the singleton already exists but has no RAG system attached
+    (e.g. first caller did not pass one), inject the supplied RAG
+    system retroactively so that subsequent callers with RAG are
+    not silently ignored.
+    """
     global _ollama_assistant
     if _ollama_assistant is None:
         _ollama_assistant = OllamaAssistant(rag_system=rag_system)
+    elif rag_system is not None and _ollama_assistant.rag_system is None:
+        _ollama_assistant.rag_system = rag_system
+        logger.info("Injected RAG system into existing OllamaAssistant singleton")
     return _ollama_assistant

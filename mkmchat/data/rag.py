@@ -211,9 +211,10 @@ class RAGSystem:
                 f"Class: {char_info.get('class', 'Unknown')}",
                 f"Rarity: {char_info.get('rarity', 'Unknown')}"
             ]
-            
-            if char_info.get('synergy'):
-                content_parts.append(f"Synergy: {char_info['synergy']}")
+
+            # Always include synergy so the embedding reflects team-comp context
+            synergy_val = char_info.get('synergy') or 'None'
+            content_parts.append(f"Synergy: {synergy_val}")
             
             # Add abilities
             if char_name in abilities_data:
@@ -251,11 +252,12 @@ class RAGSystem:
         logger.info(f"Indexed {len(chars_data)} characters")
     
     def _index_equipment(self):
-        """Index equipment data from both basic and towers files"""
+        """Index equipment data from basic, krypt and towers files"""
         import csv
         
         equipment_files = [
             self.data_dir / "equipment_basic.tsv",
+            self.data_dir / "equipment_krypt.tsv",
             self.data_dir / "equipment_towers.tsv"
         ]
         
@@ -279,7 +281,12 @@ class RAGSystem:
                         content_parts.append(f"Max Fusion Effect: {row['max_fusion_effect']}")
                     
                     # Add source information
-                    source = "Tower Equipment" if "towers" in equipment_file.name else "Basic Equipment"
+                    if "towers" in equipment_file.name:
+                        source = "Tower Equipment"
+                    elif "krypt" in equipment_file.name:
+                        source = "Krypt Equipment"
+                    else:
+                        source = "Basic Equipment"
                     content_parts.append(f"Source: {source}")
                     
                     content = "\n".join(content_parts)
@@ -291,7 +298,8 @@ class RAGSystem:
                             'type': row['type'],
                             'rarity': row.get('rarity'),
                             'tier': row.get('tier', ''),
-                            'source': source
+                            'source': source,
+                            'file': equipment_file.name
                         },
                         doc_type='equipment'
                     )
@@ -304,46 +312,92 @@ class RAGSystem:
             logger.warning("No equipment files found, skipping equipment indexing")
     
     def _index_gameplay(self):
-        """Index gameplay mechanics"""
+        """Index gameplay mechanics — one Document per line for precise retrieval."""
         gameplay_file = self.data_dir / "gameplay.txt"
         if not gameplay_file.exists():
             return
-        
+
         content = gameplay_file.read_text(encoding='utf-8')
-        
-        # Split into sections for better retrieval
-        sections = content.split('\n\n')
-        for i, section in enumerate(sections):
-            if section.strip():
-                doc = Document(
-                    content=section.strip(),
-                    metadata={'section': i},
-                    doc_type='gameplay'
-                )
-                self.documents.append(doc)
-        
-        logger.info("Indexed gameplay mechanics")
+
+        # Simple keyword → topic mapping for metadata annotation.
+        TOPIC_KEYWORDS = {
+            'team': ['team', 'composed', '3 characters', '3 vs 3', 'starter'],
+            'tag': ['tag-in', 'tag-out', 'tagging'],
+            'special attacks': ['special attack', 'sp1', 'sp2', 'sp3', 'power bar'],
+            'xray': ['x-ray', 'fatal blow', 'unblockable', 'extreme damage'],
+            'equipment': ['equipment', 'slots', 'weapon', 'armor', 'accessory'],
+            'rarity': ['bronze', 'silver', 'gold', 'diamond', 'challenge'],
+            'tier': ['tier', 'ranked', 'useless', 'good', 'game changer', 's+'],
+            'brutality': ['brutality', 'friendship', 'finalizer', 'resurrection'],
+            'game modes': ['faction wars', 'realm klash', 'tower'],
+        }
+
+        def _detect_topic(line_lower: str) -> str:
+            for topic, kws in TOPIC_KEYWORDS.items():
+                if any(kw in line_lower for kw in kws):
+                    return topic
+            return 'general'
+
+        count = 0
+        for i, line in enumerate(content.split('\n')):
+            text = line.strip()
+            if not text:
+                continue
+            topic = _detect_topic(text.lower())
+            doc = Document(
+                content=text,
+                metadata={'line': i, 'topic': topic},
+                doc_type='gameplay'
+            )
+            self.documents.append(doc)
+            count += 1
+
+        logger.info(f"Indexed {count} gameplay lines")
     
     def _index_glossary(self):
-        """Index glossary terms"""
+        """Index glossary terms — one Document per term for precise retrieval."""
         glossary_file = self.data_dir / "glossary.txt"
         if not glossary_file.exists():
             return
-        
+
         content = glossary_file.read_text(encoding='utf-8')
-        
-        # Split into term definitions
-        sections = content.split('\n\n')
-        for section in sections:
-            if section.strip():
+        current_category = 'general'
+        count = 0
+
+        for line in content.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Section header like "== DEBUFFS =="
+            if stripped.startswith('== ') and stripped.endswith(' =='):
+                current_category = stripped[3:-3].strip().lower()
+                continue
+
+            # Term definition like "Snare: Prevents the character..."
+            if ':' in stripped and stripped[0].isalpha():
+                parts = stripped.split(':', 1)
+                term = parts[0].strip()
+                definition = parts[1].strip()
+                full_text = f"{term}: {definition}"
                 doc = Document(
-                    content=section.strip(),
-                    metadata={},
+                    content=full_text,
+                    metadata={'term': term.lower(), 'category': current_category},
                     doc_type='glossary'
                 )
                 self.documents.append(doc)
-        
-        logger.info("Indexed glossary terms")
+                count += 1
+            else:
+                # Non-term line — index as-is under current category
+                doc = Document(
+                    content=stripped,
+                    metadata={'category': current_category},
+                    doc_type='glossary'
+                )
+                self.documents.append(doc)
+                count += 1
+
+        logger.info(f"Indexed {count} glossary entries")
     
     def search(
         self,

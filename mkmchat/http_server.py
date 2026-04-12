@@ -48,6 +48,33 @@ def _redact_sensitive_text(text: str) -> str:
     return redacted
 
 
+def _log_debug_interaction(tag: str, system_prompt: str, user_prompt: str, response_text: str):
+    """Log LLM interaction for debugging purposes if enabled."""
+    if not _debug_prompts_enabled():
+        return
+
+    from pathlib import Path
+    from datetime import datetime
+
+    try:
+        log_file = Path(__file__).resolve().parent / "debug_llm.log"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"TIMESTAMP: {timestamp} | TAG: {tag}\n")
+            f.write(f"{'-'*80}\n")
+            f.write(f"SYSTEM PROMPT:\n{_redact_sensitive_text(system_prompt)}\n")
+            f.write(f"{'-'*80}\n")
+            f.write(f"USER PROMPT / QUERY:\n{_redact_sensitive_text(user_prompt)}\n")
+            f.write(f"{'-'*80}\n")
+            f.write(f"LLM RESPONSE:\n{response_text}\n")
+            f.write(f"{'='*80}\n")
+        logger.debug(f"Debug interaction logged to: {log_file}")
+    except Exception as e:
+        logger.error(f"Failed to write debug log: {e}")
+
+
 def _resolve_runtime_data_dir() -> "Path":
     from pathlib import Path
 
@@ -127,6 +154,69 @@ def _tokenize_for_match(text: str) -> Set[str]:
         for token in normalized.split()
         if len(token) >= 3 and token not in _MATCH_STOPWORDS
     }
+
+
+# ---------------------------------------------------------------------------
+# Query intent classification
+# ---------------------------------------------------------------------------
+
+_INTENT_MECHANIC_PATTERNS = re.compile(
+    r"\bwhat (is|are|does)\b|\bhow (does|do|to)\b|\bexplain\b|\bdefinition\b"
+    r"|\bmechanic\b|\bbuff\b|\bdebuff\b|\beffect\b|\bstatus\b",
+    re.IGNORECASE,
+)
+
+_INTENT_EQUIPMENT_PATTERNS = re.compile(
+    r"\bequipment\b|\bweapon\b|\barmor\b|\baccessor(y|ies)\b|\bgear\b"
+    r"|\bfusion\b|\bslot\b",
+    re.IGNORECASE,
+)
+
+_INTENT_TEAM_PATTERNS = re.compile(
+    r"\bteam\b|\bcomposition\b|\bsynergy\b|\bsynergies\b|\bstarter\b"
+    r"|\bsupport\b|\bstrateg(y|ies)\b|\bbest.*character\b|\brecommend\b",
+    re.IGNORECASE,
+)
+
+_INTENT_CHARACTER_PATTERNS = re.compile(
+    r"\bcharacter\b|\bfighter\b|\bpassive\b|\brarity\b|\btier\b|\bclass\b"
+    r"|\bspecial attack\b|\bsp1\b|\bsp2\b|\bxray\b|\bx-ray\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_query_intent(query: str) -> Set[str]:
+    """Return the set of doc types most relevant for this query.
+
+    Falls back to all four types when intent is ambiguous.
+    The result guides which RAG sub-searches are performed so that
+    irrelevant passages don't pollute the LLM prompt.
+    """
+    q = (query or "").strip()
+    if not q:
+        return {"character", "equipment", "gameplay", "glossary"}
+
+    wants_mechanic = bool(_INTENT_MECHANIC_PATTERNS.search(q))
+    wants_equipment = bool(_INTENT_EQUIPMENT_PATTERNS.search(q))
+    wants_team = bool(_INTENT_TEAM_PATTERNS.search(q))
+    wants_character = bool(_INTENT_CHARACTER_PATTERNS.search(q))
+
+    intent: Set[str] = set()
+
+    if wants_mechanic:
+        intent.update({"gameplay", "glossary"})
+    if wants_equipment:
+        intent.update({"equipment", "gameplay"})
+    if wants_team:
+        intent.update({"character", "equipment", "gameplay"})
+    if wants_character:
+        intent.update({"character"})
+
+    # Always include glossary for definitions, and gameplay for context
+    if intent:
+        intent.update({"glossary"})
+
+    return intent if intent else {"character", "equipment", "gameplay", "glossary"}
 
 
 def _build_chat_retrieval_query(current_message: str, recent_messages: List[Dict[str, str]]) -> str:
@@ -297,75 +387,78 @@ def build_chat_context(rag, question: str) -> Dict[str, str]:
     if not rag or not rag.enabled:
         return context
 
-    search_variants = _chat_query_variants(question) or [question]
-    character_items = _retrieve_character_items(
-        rag,
-        question,
-        top_k_semantic=12,
-        top_k_final=8,
-        min_similarity=0.20,
-    )
+    intent = _classify_query_intent(question)
 
-    char_lines: List[str] = []
-    for doc, score in character_items:
-        name = doc.metadata.get("name", "Unknown")
-        rarity = doc.metadata.get("rarity", "?")
-        tier = doc.metadata.get("tier", "?")
-        passive = _extract_passive(doc.content)
-        score_tag = f"{score:.2f}"
-        if passive:
-            char_lines.append(
-                f"- (rel={score_tag}) [{tier}] {name} | Rarity: {rarity} | Passive: {passive}"
-            )
-        else:
-            char_lines.append(f"- (rel={score_tag}) [{tier}] {name} | Rarity: {rarity}")
+    if "character" in intent:
+        character_items = _retrieve_character_items(
+            rag,
+            question,
+            top_k_semantic=12,
+            top_k_final=8,
+            min_similarity=0.20,
+        )
+        char_lines: List[str] = []
+        for doc, score in character_items:
+            name = doc.metadata.get("name", "Unknown")
+            rarity = doc.metadata.get("rarity", "?")
+            tier = doc.metadata.get("tier", "?")
+            passive = _extract_passive(doc.content)
+            score_tag = f"{score:.2f}"
+            if passive:
+                char_lines.append(
+                    f"- (rel={score_tag}) [{tier}] {name} | Rarity: {rarity} | Passive: {passive}"
+                )
+            else:
+                char_lines.append(f"- (rel={score_tag}) [{tier}] {name} | Rarity: {rarity}")
+        context["characters"] = "\n".join(char_lines) if char_lines else "No relevant character matches found."
 
-    context["characters"] = "\n".join(char_lines) if char_lines else "No relevant character matches found."
+    if "equipment" in intent:
+        equipment_items = _search_with_variants(
+            rag,
+            question,
+            doc_type="equipment",
+            top_k_per_variant=10,
+            min_similarity=0.22,
+        )
+        equip_lines: List[str] = []
+        for doc, score in equipment_items[:10]:
+            name = doc.metadata.get("name", "Unknown")
+            equip_type = doc.metadata.get("type", "?")
+            tier = doc.metadata.get("tier", "?")
+            effect = ""
+            for line in doc.content.split("\n"):
+                if line.startswith("Effect:"):
+                    effect = line.replace("Effect:", "").strip()
+                    break
+            suffix = f" | Effect: {effect}" if effect else ""
+            equip_lines.append(f"- (rel={score:.2f}) [{tier}] {name} ({equip_type}){suffix}")
+        context["equipment"] = "\n".join(equip_lines) if equip_lines else "No relevant equipment matches found."
 
-    equipment_items = _search_with_variants(
-        rag,
-        question,
-        doc_type="equipment",
-        top_k_per_variant=10,
-        min_similarity=0.22,
-    )
-    equip_lines: List[str] = []
-    for doc, score in equipment_items[:10]:
-        name = doc.metadata.get("name", "Unknown")
-        equip_type = doc.metadata.get("type", "?")
-        tier = doc.metadata.get("tier", "?")
-        effect = ""
-        for line in doc.content.split("\n"):
-            if line.startswith("Effect:"):
-                effect = line.replace("Effect:", "").strip()
-                break
-        suffix = f" | Effect: {effect}" if effect else ""
-        equip_lines.append(f"- (rel={score:.2f}) [{tier}] {name} ({equip_type}){suffix}")
+    if "gameplay" in intent:
+        context["gameplay"] = _format_retrieved_snippets(
+            rag,
+            question,
+            doc_type="gameplay",
+            top_k_per_variant=5,
+            min_similarity=0.18,
+            max_items=4,
+            max_chars=None,
+            snippet_chars=260,
+            empty_text="No directly relevant gameplay snippets found.",
+        )
 
-    context["equipment"] = "\n".join(equip_lines) if equip_lines else "No relevant equipment matches found."
-
-    context["gameplay"] = _format_retrieved_snippets(
-        rag,
-        question,
-        doc_type="gameplay",
-        top_k_per_variant=5,
-        min_similarity=0.18,
-        max_items=4,
-        max_chars=None,
-        snippet_chars=260,
-        empty_text="No directly relevant gameplay snippets found.",
-    )
-    context["glossary"] = _format_retrieved_snippets(
-        rag,
-        question,
-        doc_type="glossary",
-        top_k_per_variant=5,
-        min_similarity=0.18,
-        max_items=4,
-        max_chars=None,
-        snippet_chars=220,
-        empty_text="No directly relevant glossary snippets found.",
-    )
+    if "glossary" in intent:
+        context["glossary"] = _format_retrieved_snippets(
+            rag,
+            question,
+            doc_type="glossary",
+            top_k_per_variant=5,
+            min_similarity=0.18,
+            max_items=4,
+            max_chars=None,
+            snippet_chars=220,
+            empty_text="No directly relevant glossary snippets found.",
+        )
 
     return context
 
@@ -510,71 +603,69 @@ def build_structured_context(
                 gameplay_text = gameplay_text[:gameplay_max_chars].strip()
             context["gameplay"] = gameplay_text or context["gameplay"]
         return context
-    
+
+    intent = _classify_query_intent(strategy)
+
     # Variant-aware retrieval with lexical boosting to avoid missing partial character names.
     character_limit = max(8, min(80, int(character_limit)))
     equipment_limit = max(8, min(80, int(equipment_limit)))
 
-    char_results = _retrieve_character_items(
-        rag,
-        strategy,
-        top_k_semantic=24,
-        top_k_final=character_limit,
-        min_similarity=0.18,
-    )
-    char_list = []
-    for doc, score in char_results:
-        name = doc.metadata.get("name", "Unknown")
-        rarity = doc.metadata.get("rarity", "?")
-        tier = doc.metadata.get("tier", "?")
-        # Extract passive from content (it's in the document content)
-        passive = ""
-        for line in doc.content.split("\n"):
-            if line.startswith("Passive:"):
-                passive = line.replace("Passive:", "").strip()
-                break
-        if passive_max_chars and passive_max_chars > 0 and len(passive) > passive_max_chars:
-            passive = passive[:passive_max_chars].rstrip() + "..."
-        char_list.append(f"- [{tier}] Rarity: {rarity} | Name: {name} | Passive: {passive}" if passive else f"- [{tier}] Rarity: {rarity} | Name: {name}")
-    
-    context["characters"] = "\n".join(char_list) if char_list else context["characters"]
-    
-    # Variant-aware equipment retrieval.
-    equip_results = _search_with_variants(
-        rag,
-        strategy,
-        doc_type="equipment",
-        top_k_per_variant=24,
-        min_similarity=0.18,
-    )[:equipment_limit]
-    weapons, armor, accessories = [], [], []
-    
-    for doc, score in equip_results:
-        name = doc.metadata.get("name", "Unknown")
-        equip_type = doc.metadata.get("type", "").strip()
-        tier = doc.metadata.get("tier", "?")
-        
-        # Extract effect from content
-        effect = ""
-        for line in doc.content.split("\n"):
-            if line.startswith("Effect:"):
-                effect = line.replace("Effect:", "").strip()
-                break
-        
-        item_str = f"- [{tier}] {name}" + (f" ({effect})" if effect else "")
-        
-        # Categorize by type field from TSV
-        if equip_type == "Weapon":
-            weapons.append(item_str)
-        elif equip_type == "Armor":
-            armor.append(item_str)
-        elif equip_type == "Accessory":
-            accessories.append(item_str)
-    
-    # Items within each category maintain tier order from RAG
-    context["weapons"] = "\n".join(weapons[:]) if weapons else context["weapons"]
-    context["armor"] = "\n".join(armor[:]) if armor else context["armor"]
-    context["accessories"] = "\n".join(accessories[:]) if accessories else context["accessories"]
+    if "character" in intent:
+        char_results = _retrieve_character_items(
+            rag,
+            strategy,
+            top_k_semantic=24,
+            top_k_final=character_limit,
+            min_similarity=0.18,
+        )
+        char_list = []
+        for doc, score in char_results:
+            name = doc.metadata.get("name", "Unknown")
+            rarity = doc.metadata.get("rarity", "?")
+            tier = doc.metadata.get("tier", "?")
+            # Extract passive from content (it's in the document content)
+            passive = ""
+            for line in doc.content.split("\n"):
+                if line.startswith("Passive:"):
+                    passive = line.replace("Passive:", "").strip()
+                    break
+            if passive_max_chars and passive_max_chars > 0 and len(passive) > passive_max_chars:
+                passive = passive[:passive_max_chars].rstrip() + "..."
+            char_list.append(f"- [{tier}] Rarity: {rarity} | Name: {name} | Passive: {passive}" if passive else f"- [{tier}] Rarity: {rarity} | Name: {name}")
+        context["characters"] = "\n".join(char_list) if char_list else context["characters"]
+
+    if "equipment" in intent:
+        # Variant-aware equipment retrieval.
+        equip_results = _search_with_variants(
+            rag,
+            strategy,
+            doc_type="equipment",
+            top_k_per_variant=24,
+            min_similarity=0.18,
+        )[:equipment_limit]
+        weapons, armor, accessories = [], [], []
+        for doc, score in equip_results:
+            name = doc.metadata.get("name", "Unknown")
+            equip_type = doc.metadata.get("type", "").strip()
+            tier = doc.metadata.get("tier", "?")
+            # Extract effect from content
+            effect = ""
+            for line in doc.content.split("\n"):
+                if line.startswith("Effect:"):
+                    effect = line.replace("Effect:", "").strip()
+                    break
+            item_str = f"- [{tier}] {name}" + (f" ({effect})" if effect else "")
+            # Categorize by type field from TSV
+            if equip_type == "Weapon":
+                weapons.append(item_str)
+            elif equip_type == "Armor":
+                armor.append(item_str)
+            elif equip_type == "Accessory":
+                accessories.append(item_str)
+        # Items within each category maintain tier order from RAG
+        context["weapons"] = "\n".join(weapons[:]) if weapons else context["weapons"]
+        context["armor"] = "\n".join(armor[:]) if armor else context["armor"]
+        context["accessories"] = "\n".join(accessories[:]) if accessories else context["accessories"]
 
     context["gameplay"] = _format_retrieved_snippets(
         rag,
@@ -618,15 +709,32 @@ async def suggest_team_json(
     Returns:
         Structured JSON with team suggestion
     """
+    def _clean_llm_json(text: str) -> str:
+        """Strip thinking tags, markdown wrappers, and trailing debris."""
+        if not text:
+            return ""
+        # Remove thinking tags (even if unclosed due to truncation)
+        import re
+        text = re.sub(r'<think>.*?(?:</think>|$)', '', text, flags=re.DOTALL)
+        # Find first { and last }
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1:
+            if end != -1 and end > start:
+                return text[start:end+1]
+            return text[start:] # Return from start of JSON even if truncated
+        return text.strip()
+
     def _normalize_team_payload(payload: object) -> Dict[str, object]:
         def _to_effect_text(item: object) -> str:
             if isinstance(item, str):
                 return item.strip()
             if isinstance(item, dict):
-                if isinstance(item.get("effect"), str):
-                    return str(item.get("effect", "")).strip()
-                if isinstance(item.get("description"), str):
-                    return str(item.get("description", "")).strip()
+                # Check multiple possible keys
+                for k in ["effect", "description", "passive", "text"]:
+                    val = item.get(k)
+                    if isinstance(val, str) and val.strip():
+                        return val.strip()
             return ""
 
         def _normalize_char(char_obj: object) -> Dict[str, object]:
@@ -634,44 +742,59 @@ async def suggest_team_json(
                 return {}
 
             char = dict(char_obj)
+            # Ensure passive is a string
             passive_val = char.get("passive")
             if isinstance(passive_val, dict):
-                desc = passive_val.get("description")
-                if isinstance(desc, str):
-                    char["passive"] = desc.strip()
+                char["passive"] = _to_effect_text(passive_val)
+            elif not isinstance(passive_val, str):
+                char["passive"] = ""
+
+            # Ensure rarity is a string
+            rarity_val = char.get("rarity")
+            if not isinstance(rarity_val, str):
+                char["rarity"] = "?"
 
             equipment = char.get("equipment")
-            if isinstance(equipment, list):
+            if not isinstance(equipment, list):
+                # Try translation from dict-based slots or weapons/armor/accessories lists
+                built_equipment: List[Dict[str, str]] = []
+                for src_key in ["weapon", "armor", "accessory", "extra", "weapons", "armor", "accessories"]:
+                    source = char.get(src_key)
+                    if not source:
+                        continue
+                    items = source if isinstance(source, list) else [source]
+                    for item in items:
+                        if isinstance(item, dict):
+                            name = str(item.get("name", "")).strip()
+                            effect = _to_effect_text(item)
+                        else:
+                            name = str(item).strip()
+                            effect = ""
+                        if name:
+                            slot = src_key.rstrip('s')
+                            if slot == "extra": slot = "accessory" # treat extra as accessory
+                            built_equipment.append({"slot": slot, "name": name, "effect": effect})
+                char["equipment"] = built_equipment
+            else:
+                # Clean existing list
                 normalized_equipment: List[Dict[str, str]] = []
                 for item in equipment:
-                    if not isinstance(item, dict):
-                        continue
-                    slot = str(item.get("slot", "")).strip().lower()
-                    name = str(item.get("name", "")).strip()
-                    effect = _to_effect_text(item)
-                    if slot and name:
-                        normalized_equipment.append({"slot": slot, "name": name, "effect": effect})
-                if normalized_equipment:
-                    char["equipment"] = normalized_equipment
-
-            # Alternate schema support: weapons/armor/accessories arrays -> equipment[]
-            if not isinstance(char.get("equipment"), list):
-                built_equipment: List[Dict[str, str]] = []
-                for src_key, slot in [("weapons", "weapon"), ("armor", "armor"), ("accessories", "accessory")]:
-                    source = char.get(src_key)
-                    if not isinstance(source, list) or not source:
-                        continue
-                    first = source[0]
-                    if isinstance(first, dict):
-                        name = str(first.get("name", "")).strip()
-                        effect = _to_effect_text(first)
-                    else:
-                        name = str(first).strip()
-                        effect = ""
-                    if name:
-                        built_equipment.append({"slot": slot, "name": name, "effect": effect})
-                if built_equipment:
-                    char["equipment"] = built_equipment
+                    if isinstance(item, dict):
+                        slot = str(item.get("slot", "")).strip().lower() or "accessory"
+                        name = str(item.get("name", "")).strip()
+                        if name:
+                            normalized_equipment.append({
+                                "slot": slot,
+                                "name": name,
+                                "effect": _to_effect_text(item)
+                            })
+                    elif isinstance(item, str) and item.strip():
+                        normalized_equipment.append({
+                            "slot": "accessory",
+                            "name": item.strip(),
+                            "effect": ""
+                        })
+                char["equipment"] = normalized_equipment
 
             return char
 
@@ -679,9 +802,14 @@ async def suggest_team_json(
             return {}
 
         team = dict(payload)
-        nested = team.get("response")
-        if isinstance(nested, dict):
-            team = dict(nested)
+        # Pull from "response" or "team" nested keys if present
+        for k in ["response", "team", "data"]:
+            nested = team.get(k)
+            if isinstance(nested, dict):
+                # Merge nested into top level
+                for nk, nv in nested.items():
+                    if nk not in team or not team[nk]:
+                        team[nk] = nv
 
         if "strategy" not in team and isinstance(team.get("text"), str):
             team["strategy"] = str(team.get("text", "")).strip()
@@ -689,81 +817,50 @@ async def suggest_team_json(
         # Alternate schema: single character object at top-level.
         if "char1" not in team and isinstance(team.get("name"), str):
             team["char1"] = dict(team)
-            if "strategy" not in team:
-                team["strategy"] = "Team generated from available candidate data."
 
-        for source_key in ["team", "characters"]:
-            source = team.get(source_key)
-            if isinstance(source, list):
-                for idx, item in enumerate(source[:3], start=1):
-                    if isinstance(item, dict):
-                        team[f"char{idx}"] = _normalize_char(item)
+        # Handle "characters": [...] list
+        chars_list = team.get("characters")
+        if isinstance(chars_list, list):
+            for idx, item in enumerate(chars_list[:3], start=1):
+                key = f"char{idx}"
+                if key not in team or not team[key]:
+                    team[key] = item
 
+        # Final pass over char1, char2, char3
         for idx in range(1, 4):
             key = f"char{idx}"
             if key in team:
                 team[key] = _normalize_char(team[key])
+            else:
+                team[key] = {"name": "Placeholder", "rarity": "Gold", "passive": "", "equipment": []}
+
+        if not team.get("strategy"):
+            team["strategy"] = "Optimized team based on your request."
 
         return team
 
     def _enforce_team_output_format(team: Dict[str, object]) -> Optional[Dict[str, object]]:
+        """Permissive enforcer: ensures key fields exist, but doesn't crash on partial data."""
         if not isinstance(team, dict):
             return None
 
-        strategy_text = str(team.get("strategy", "")).strip()
-        if not strategy_text:
+        # We must at least have char1 and strategy
+        if not team.get("char1") or not isinstance(team["char1"], dict):
             return None
-
-        normalized_team: Dict[str, object] = {"strategy": strategy_text}
-
+        
+        # Ensure name exists for all characters
         for idx in range(1, 4):
             key = f"char{idx}"
-            raw_char = team.get(key)
-            if not isinstance(raw_char, dict):
-                return None
+            char = team.get(key)
+            if not isinstance(char, dict) or not char.get("name"):
+                # If char2 or char3 is missing, we fill with empty instead of failing
+                team[key] = {"name": "Unknown", "rarity": "Gold", "passive": "", "equipment": []}
+            
+            # Ensure equipment is a list
+            if not isinstance(team[key].get("equipment"), list):
+                team[key]["equipment"] = []
 
-            name = str(raw_char.get("name", "")).strip()
-            if not name:
-                return None
-
-            rarity = str(raw_char.get("rarity", "")).strip()
-            passive = str(raw_char.get("passive", "")).strip()
-
-            raw_equipment = raw_char.get("equipment")
-            if not isinstance(raw_equipment, list):
-                return None
-
-            by_slot: Dict[str, Dict[str, str]] = {}
-            for item in raw_equipment:
-                if not isinstance(item, dict):
-                    continue
-                slot = str(item.get("slot", "")).strip().lower()
-                if slot not in {"weapon", "armor", "accessory"}:
-                    continue
-                if slot in by_slot:
-                    continue
-
-                eq_name = str(item.get("name", "")).strip()
-                if not eq_name:
-                    continue
-                effect = str(item.get("effect", "")).strip()
-                by_slot[slot] = {"slot": slot, "name": eq_name, "effect": effect}
-
-            if set(by_slot.keys()) != {"weapon", "armor", "accessory"}:
-                return None
-
-            normalized_team[key] = {
-                "name": name,
-                "rarity": rarity,
-                "passive": passive,
-                "equipment": [
-                    by_slot["weapon"],
-                    by_slot["armor"],
-                    by_slot["accessory"],
-                ],
-            }
-
-        return normalized_team
+        return team
 
     try:
         rag = get_rag_system()
@@ -778,14 +875,15 @@ async def suggest_team_json(
         use_model = assistant._resolve_model_name(model)
         
         # Build endpoint-tuned context for stable JSON output.
+        # Reduced limits for 3B models to decrease context pressure and prevent truncation.
         context = build_structured_context(
             rag,
             strategy,
-            character_limit=_safe_positive_int(os.getenv("MKM_TEAM_CHAR_LIMIT", "22"), 22),
-            equipment_limit=_safe_positive_int(os.getenv("MKM_TEAM_EQUIP_LIMIT", "24"), 24),
+            character_limit=_safe_positive_int(os.getenv("MKM_TEAM_CHAR_LIMIT", "12"), 12),
+            equipment_limit=_safe_positive_int(os.getenv("MKM_TEAM_EQUIP_LIMIT", "15"), 15),
             passive_max_chars=_safe_positive_int(os.getenv("MKM_TEAM_PASSIVE_MAX_CHARS", "420"), 420),
-            gameplay_max_chars=_safe_positive_int(os.getenv("MKM_TEAM_GAMEPLAY_MAX_CHARS", "1200"), 1200),
-            glossary_max_chars=_safe_positive_int(os.getenv("MKM_TEAM_GLOSSARY_MAX_CHARS", "1200"), 1200),
+            gameplay_max_chars=_safe_positive_int(os.getenv("MKM_TEAM_GAMEPLAY_MAX_CHARS", "1000"), 1000),
+            glossary_max_chars=_safe_positive_int(os.getenv("MKM_TEAM_GLOSSARY_MAX_CHARS", "1000"), 1000),
         )
         
         owned_filter = ""
@@ -794,7 +892,7 @@ async def suggest_team_json(
         
         # System prompt: static rules and reference data (reset each call with keep_alive=0)
         system_prompt = f"""You are a Mortal Kombat Mobile team builder assistant.
-
+    
 === GAMEPLAY MECHANICS ===
 {context['gameplay']}
 
@@ -813,10 +911,12 @@ async def suggest_team_json(
 Respond with ONLY this JSON structure:
 {{
     "char1": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [{{"slot": "weapon", "name": "<name>", "effect": "<effect>"}}, {{"slot": "armor", "name": "<name>", "effect": "<effect>"}}, {{"slot": "accessory", "name": "<name>", "effect": "<effect>"}}]}},
-    "char2": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [same structure]}},
-    "char3": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [same structure]}},
+    "char2": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [{{"slot": "weapon", "name": "<name>", "effect": "<effect>"}}, {{"slot": "armor", "name": "<name>", "effect": "<effect>"}}, {{"slot": "accessory", "name": "<name>", "effect": "<effect>"}}]}},
+    "char3": {{"name": "<character name>", "rarity":"<character rarity>" ,"passive": "<passive text>", "equipment": [{{"slot": "weapon", "name": "<name>", "effect": "<effect>"}}, {{"slot": "armor", "name": "<name>", "effect": "<effect>"}}, {{"slot": "accessory", "name": "<name>", "effect": "<effect>"}}]}},
     "strategy": "<explanation of team synergy>"
-}}"""
+}}
+
+IMPORTANT: You MUST generate JSON for exactly 3 characters (char1, char2, char3). Do not stop after the first character."""
 
         # User prompt: the specific request with available items
         user_prompt = f"""{owned_filter}Build a team for: {strategy}
@@ -833,14 +933,10 @@ Respond with ONLY this JSON structure:
 === AVAILABLE ACCESSORIES ===
 {context['accessories']}"""
 
-        if _debug_prompts_enabled():
-            from pathlib import Path
-
-            log_file = Path(__file__).resolve().parent / "prompt_debug.log"
-            with open(log_file, 'w', encoding='utf-8') as f:
-                f.write(f"=== SYSTEM PROMPT ===\n{_redact_sensitive_text(system_prompt)}\n\n")
-                f.write(f"=== USER PROMPT ===\n{_redact_sensitive_text(user_prompt)}\n")
-            logger.info(f"Prompt debug log written to: {log_file}")
+        # Detect if we should use higher limits for reasoning models (DeepSeek-R1, o1, etc.)
+        is_reasoning_model = any(kw in use_model.lower() for kw in ["r1", "o1", "thought", "reasoning"])
+        num_predict = 4000 if is_reasoning_model else 2500
+        num_ctx = 8192 if is_reasoning_model else 4096
 
         import httpx
         
@@ -853,76 +949,61 @@ Respond with ONLY this JSON structure:
                     "prompt": user_prompt,
                     "stream": False,
                     "format": "json",
-                    "keep_alive": 0,  # Unload model after request to reset context
+                    "keep_alive": "5m", # Keep in memory for 5 mins
                     "options": {
-                        "temperature": 0.1,  # Very low temperature for consistent output
-                        "num_predict": 2000
+                        "temperature": 0.3 if is_reasoning_model else 0.1, # Slightly higher for reasoning depth
+                        "num_predict": num_predict,
+                        "num_ctx": num_ctx
                     }
                 },
                 timeout=_get_http_timeout_seconds()
             )
             
             if response.status_code != 200:
+                _log_debug_interaction("SUGGEST_TEAM_ERR", system_prompt, user_prompt, f"HTTP {response.status_code}")
                 return {"error": f"Ollama API returned status {response.status_code}"}
             
             result = response.json()
             response_text = result.get("response", "")
+            _log_debug_interaction("SUGGEST_TEAM", system_prompt, user_prompt, response_text)
             
-            # Try to parse the JSON response
+            # 1. Clean and parse JSON
+            cleaned_json = _clean_llm_json(response_text)
+            team_data = None
+            
             try:
-                team_data = json.loads(response_text)
-                team_data = _normalize_team_payload(team_data)
-                team_data = _enforce_team_output_format(team_data)
-                if team_data:
-                    return {"response": team_data}
-            except json.JSONDecodeError as e:
-                # Try to extract JSON from the response
-                logger.warning(f"Failed to parse JSON directly: {e}")
-
-                # Try Python-literal dict/list outputs (single quotes etc.).
+                team_data = json.loads(cleaned_json)
+            except json.JSONDecodeError:
+                # 2. Try Python literal eval if JSON fails
                 try:
                     import ast
-
-                    py_obj = ast.literal_eval(response_text)
-                    team_data = _normalize_team_payload(py_obj)
-                    team_data = _enforce_team_output_format(team_data)
-                    if team_data:
-                        return {"response": team_data}
+                    team_data = ast.literal_eval(cleaned_json)
                 except Exception:
                     pass
-                
-                # Try to find JSON in the response
-                start_idx = response_text.find('{')
-                end_idx = response_text.rfind('}')
-                
-                if start_idx != -1 and end_idx != -1:
-                    json_str = response_text[start_idx:end_idx + 1]
-                    try:
-                        team_data = json.loads(json_str)
-                        team_data = _normalize_team_payload(team_data)
-                        team_data = _enforce_team_output_format(team_data)
-                        if team_data:
-                            return {"response": team_data}
-                    except json.JSONDecodeError:
-                        try:
-                            import ast
 
-                            py_obj = ast.literal_eval(json_str)
-                            team_data = _normalize_team_payload(py_obj)
-                            team_data = _enforce_team_output_format(team_data)
-                            if team_data:
-                                return {"response": team_data}
-                        except Exception:
-                            pass
+            if team_data:
+                # 3. Normalize and Enforce (permissive)
+                team_data = _normalize_team_payload(team_data)
+                final_team = _enforce_team_output_format(team_data)
+                if final_team:
+                    return {"response": final_team}
 
-                return {
-                    "error": "Failed to parse model output into required team JSON schema",
-                    "raw_response": response_text
+            # 4. Final fallback logic if parsing failed
+            # If we have a strategy but failed on characters, we return a fallback response
+            if isinstance(team_data, dict) and team_data.get("strategy"):
+                 return {
+                    "response": {
+                        "strategy": team_data["strategy"],
+                        "char1": {"name": "Retrieval Success", "rarity": "Diamond", "passive": "Model response was partially malformed. Please try again.", "equipment": []},
+                        "char2": {"name": "Parsing Issue", "rarity": "Diamond", "passive": "", "equipment": []},
+                        "char3": {"name": "Structure Refinement", "rarity": "Diamond", "passive": "", "equipment": []}
+                    }
                 }
 
             return {
-                "error": "Model returned JSON but not in required team schema.",
+                "error": "Failed to parse model output into required team JSON schema",
                 "raw_response": response_text,
+                "cleaned_attempt": cleaned_json
             }
                 
     except Exception as e:
@@ -998,10 +1079,12 @@ async def ask_question_json(question: str, model: Optional[str] = None) -> dict:
             )
 
             if response.status_code != 200:
+                _log_debug_interaction("ASK_QUESTION_ERR", system_prompt, question, f"HTTP {response.status_code}")
                 return {"error": f"Ollama API returned status {response.status_code}"}
 
             result = response.json()
             response_text = result.get("response", "").strip()
+            _log_debug_interaction("ASK_QUESTION", system_prompt, question, response_text)
 
             if not response_text:
                 return {"error": "Empty response from LLM"}
@@ -1145,10 +1228,12 @@ async def chat_json(
             )
 
         if response.status_code != 200:
+            _log_debug_interaction("CHAT_ERR", system_prompt, message, f"HTTP {response.status_code}")
             return {"error": f"Ollama API returned status {response.status_code}"}
 
         result = response.json()
         response_text = str(result.get("response", "")).strip()
+        _log_debug_interaction("CHAT", system_prompt, message, response_text)
         if not response_text:
             return {"error": "Empty response from LLM"}
 

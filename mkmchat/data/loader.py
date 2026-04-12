@@ -2,11 +2,14 @@
 
 import json
 import csv
+import logging
 from difflib import get_close_matches
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from mkmchat.models import Character, Equipment, Team, CharacterStats, Ability, Passive
+
+logger = logging.getLogger(__name__)
 
 
 class DataLoader:
@@ -116,10 +119,14 @@ class DataLoader:
             reader = csv.DictReader(f, delimiter='\t')
             for row in reader:
                 char_name = row['character']
+                description = row.get('description') or ''
+                if not description:
+                    logger.warning(f"Passive for '{char_name}' has no description, skipping")
+                    continue
                 passive = Passive(
-                    name=char_name,  # Use character name as passive name
-                    description=row['description'],
-                    tags=[]  # No tags in new structure
+                    name=char_name,
+                    description=description,
+                    tags=[]
                 )
                 passives_dict[char_name] = passive
         
@@ -127,17 +134,24 @@ class DataLoader:
         with open(chars_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f, delimiter='\t')
             for row in reader:
-                char_name = row['name']
+                char_name = row.get('name', '').strip()
+                if not char_name:
+                    continue
                 
                 # Get abilities and passives for this character
                 abilities = abilities_dict.get(char_name, [])
                 passive = passives_dict.get(char_name, None)
                 
+                # Get fields with defaults to avoid ValidationError for None/empty
+                char_class = row.get('class') or 'Unknown'
+                rarity = row.get('rarity') or 'Unknown'
+                tier = row.get('tier') or 'D'
+                
                 char = Character(
                     name=char_name,
-                    **{"class": row['class']},  # Use alias
-                    rarity=row['rarity'],
-                    tier=row['tier'],
+                    **{"class": char_class},  # Use alias
+                    rarity=rarity,
+                    tier=tier,
                     stats=CharacterStats(
                         attack=0,  # No stats in new structure
                         health=0,
@@ -148,7 +162,7 @@ class DataLoader:
                     passive=passive,
                     synergy=row.get('synergy', '') if row.get('synergy') else None
                 )
-                self._characters[char.name.lower()] = char
+                self._characters[char_name.lower()] = char
                 
     def load_equipment(self):
         """Load equipment data from TSV or JSON"""

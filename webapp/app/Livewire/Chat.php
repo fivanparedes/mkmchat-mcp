@@ -77,6 +77,7 @@ class Chat extends Component
 
         return $conversation->messages()
             ->orderBy('id')
+            ->limit(500)
             ->get();
     }
 
@@ -253,6 +254,7 @@ class Chat extends Component
 
             $allMessages = $conversation->messages()
                 ->orderBy('id')
+                ->limit(1000)
                 ->get(['role', 'content']);
 
             $messages = $allMessages

@@ -20,6 +20,7 @@ class User extends Authenticatable
         'role',
         'bio',
         'avatar_url',
+        'theme',
     ];
 
     protected $hidden = [

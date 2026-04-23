@@ -57,7 +57,11 @@ def _log_debug_interaction(tag: str, system_prompt: str, user_prompt: str, respo
     from datetime import datetime
 
     try:
-        log_file = Path(__file__).resolve().parent / "debug_llm.log"
+        # Use /app/debug_llm.log if possible, otherwise local dir
+        log_file = Path("/app/debug_llm.log")
+        if not log_file.parent.exists():
+            log_file = Path(__file__).resolve().parent / "debug_llm.log"
+            
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         with open(log_file, 'a', encoding='utf-8') as f:
@@ -70,9 +74,9 @@ def _log_debug_interaction(tag: str, system_prompt: str, user_prompt: str, respo
             f.write(f"{'-'*80}\n")
             f.write(f"LLM RESPONSE:\n{response_text}\n")
             f.write(f"{'='*80}\n")
-        logger.debug(f"Debug interaction logged to: {log_file}")
+        logger.info(f"Interaction ({tag}) logged to {log_file}")
     except Exception as e:
-        logger.error(f"Failed to write debug log: {e}")
+        logger.error(f"Failed to write debug log: {repr(e)}")
 
 
 def _resolve_runtime_data_dir() -> "Path":
@@ -168,7 +172,7 @@ _INTENT_MECHANIC_PATTERNS = re.compile(
 
 _INTENT_EQUIPMENT_PATTERNS = re.compile(
     r"\bequipment\b|\bweapon\b|\barmor\b|\baccessor(y|ies)\b|\bgear\b"
-    r"|\bfusion\b|\bslot\b",
+    r"|\bfusion\b|\bslot\b|\bbrutality\b|\bfriendship\b",
     re.IGNORECASE,
 )
 
@@ -333,6 +337,84 @@ def _retrieve_character_items(
     return character_items[:top_k_final]
 
 
+def _retrieve_equipment_items(
+    rag,
+    query: str,
+    *,
+    top_k_per_variant: int,
+    top_k_final: int,
+    min_similarity: float,
+) -> List[Tuple[object, float]]:
+    """Retrieve equipment with semantic search + lexical boost + tier boost."""
+    equipment_pool: Dict[int, Tuple[object, float]] = {}
+
+    def _upsert_equipment(doc: object, score: float) -> None:
+        key = id(doc)
+        existing = equipment_pool.get(key)
+        if not existing or score > existing[1]:
+            equipment_pool[key] = (doc, score)
+
+    # 1. Semantic search
+    for doc, score in _search_with_variants(
+        rag,
+        query,
+        doc_type="equipment",
+        top_k_per_variant=top_k_per_variant,
+        min_similarity=min_similarity,
+    ):
+        _upsert_equipment(doc, score)
+
+    # 2. Lexical matching
+    search_variants = _chat_query_variants(query) or [query]
+    full_query = " ".join(search_variants).strip()
+    lowered_query = full_query.lower()
+    query_norm = _normalize_for_match(full_query)
+    query_terms = _tokenize_for_match(full_query)
+
+    for doc in rag.documents:
+        if doc.doc_type != "equipment":
+            continue
+        
+        name = str(doc.metadata.get("name", "")).strip()
+        if not name:
+            continue
+
+        name_norm = _normalize_for_match(name)
+        name_terms = _tokenize_for_match(name)
+        overlap = len(query_terms & name_terms) if name_terms else 0
+        coverage = (overlap / len(name_terms)) if name_terms else 0.0
+
+        lexical_score: Optional[float] = None
+        # Name match
+        if name.lower() in lowered_query or (name_norm and name_norm in query_norm):
+            lexical_score = 0.99
+        # Strong keyword match
+        elif overlap >= 2 and coverage >= 0.5:
+            lexical_score = 0.92 + min(0.05, overlap * 0.01)
+        # Content match (Brutality/Friendship for character)
+        else:
+            content_norm = _normalize_for_match(doc.content)
+            content_terms = _tokenize_for_match(doc.content)
+            content_overlap = len(query_terms & content_terms)
+            if content_overlap >= 3:
+                lexical_score = 0.85 + min(0.1, content_overlap * 0.01)
+
+        if lexical_score is not None:
+            _upsert_equipment(doc, lexical_score)
+
+    # 3. Apply Tier Boost
+    final_results = []
+    # Local tier rank mapping to avoid dependency on rag.py internals
+    tiers = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4, "S+": 5}
+    for doc, score in equipment_pool.values():
+        tier = str(doc.metadata.get("tier", "")).strip().upper()
+        tier_rank = tiers.get(tier, 0)
+        final_results.append((doc, score + (tier_rank * 0.1)))
+
+    final_results.sort(key=lambda x: x[1], reverse=True)
+    return final_results[:top_k_final]
+
+
 def _format_retrieved_snippets(
     rag,
     query: str,
@@ -393,8 +475,8 @@ def build_chat_context(rag, question: str) -> Dict[str, str]:
         character_items = _retrieve_character_items(
             rag,
             question,
-            top_k_semantic=12,
-            top_k_final=8,
+            top_k_semantic=16,
+            top_k_final=12,
             min_similarity=0.20,
         )
         char_lines: List[str] = []
@@ -413,15 +495,15 @@ def build_chat_context(rag, question: str) -> Dict[str, str]:
         context["characters"] = "\n".join(char_lines) if char_lines else "No relevant character matches found."
 
     if "equipment" in intent:
-        equipment_items = _search_with_variants(
+        equipment_items = _retrieve_equipment_items(
             rag,
             question,
-            doc_type="equipment",
-            top_k_per_variant=10,
+            top_k_per_variant=15,
+            top_k_final=10,
             min_similarity=0.22,
         )
         equip_lines: List[str] = []
-        for doc, score in equipment_items[:10]:
+        for doc, score in equipment_items:
             name = doc.metadata.get("name", "Unknown")
             equip_type = doc.metadata.get("type", "?")
             tier = doc.metadata.get("tier", "?")
@@ -441,7 +523,7 @@ def build_chat_context(rag, question: str) -> Dict[str, str]:
             doc_type="gameplay",
             top_k_per_variant=5,
             min_similarity=0.18,
-            max_items=4,
+            max_items=6,
             max_chars=None,
             snippet_chars=260,
             empty_text="No directly relevant gameplay snippets found.",
@@ -454,7 +536,7 @@ def build_chat_context(rag, question: str) -> Dict[str, str]:
             doc_type="glossary",
             top_k_per_variant=5,
             min_similarity=0.18,
-            max_items=4,
+            max_items=6,
             max_chars=None,
             snippet_chars=220,
             empty_text="No directly relevant glossary snippets found.",
@@ -503,13 +585,15 @@ Rules:
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"{assistant.base_url}/api/generate",
+            f"{assistant.base_url}/api/chat",
             json={
                 "model": summary_model,
-                "system": system_prompt,
-                "prompt": prompt,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
                 "stream": False,
-                "keep_alive": 0,
+                "keep_alive": "10m",
                 "options": {
                     "temperature": 0.1,
                     "num_predict": 500,
@@ -523,7 +607,10 @@ Rules:
         return existing_summary or None
 
     result = response.json()
-    text = str(result.get("response", "")).strip()
+    if "error" in result:
+        logger.warning("Chat summary request failed: %s", result["error"])
+        return existing_summary or None
+    text = str(result.get("message", {}).get("content", "")).strip()
     if not text:
         return existing_summary or None
 
@@ -537,9 +624,9 @@ async def _compact_chat_history(
     existing_summary: str,
     existing_summary_count: int,
 ) -> Tuple[Optional[str], int, List[Dict[str, str]]]:
-    keep_recent = _safe_positive_int(os.getenv("MKM_CHAT_KEEP_RECENT_MESSAGES", "10"), 10)
+    keep_recent = _safe_positive_int(os.getenv("MKM_CHAT_KEEP_RECENT_MESSAGES", "4"), 4)
     compact_trigger = _safe_positive_int(
-        os.getenv("MKM_CHAT_COMPACT_TRIGGER_MESSAGES", "24"), 24
+        os.getenv("MKM_CHAT_COMPACT_TRIGGER_MESSAGES", "8"), 8
     )
 
     if len(messages) <= keep_recent:
@@ -942,14 +1029,16 @@ IMPORTANT: You MUST generate JSON for exactly 3 characters (char1, char2, char3)
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{assistant.base_url}/api/generate",
+                f"{assistant.base_url}/api/chat",
                 json={
                     "model": use_model,
-                    "system": system_prompt,
-                    "prompt": user_prompt,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
                     "stream": False,
                     "format": "json",
-                    "keep_alive": "5m", # Keep in memory for 5 mins
+                    "keep_alive": "10m", # Keep in memory for 10 mins
                     "options": {
                         "temperature": 0.3 if is_reasoning_model else 0.1, # Slightly higher for reasoning depth
                         "num_predict": num_predict,
@@ -960,11 +1049,18 @@ IMPORTANT: You MUST generate JSON for exactly 3 characters (char1, char2, char3)
             )
             
             if response.status_code != 200:
-                _log_debug_interaction("SUGGEST_TEAM_ERR", system_prompt, user_prompt, f"HTTP {response.status_code}")
+                err_msg = f"HTTP {response.status_code}"
+                try:
+                    err_msg += f": {response.text[:200]}"
+                except Exception:
+                    pass
+                _log_debug_interaction("SUGGEST_TEAM_ERR", system_prompt, user_prompt, err_msg)
                 return {"error": f"Ollama API returned status {response.status_code}"}
             
             result = response.json()
-            response_text = result.get("response", "")
+            if "error" in result:
+                return {"error": f"Ollama Error: {result['error']}"}
+            response_text = result.get("message", {}).get("content", "")
             _log_debug_interaction("SUGGEST_TEAM", system_prompt, user_prompt, response_text)
             
             # 1. Clean and parse JSON
@@ -1063,13 +1159,15 @@ async def ask_question_json(question: str, model: Optional[str] = None) -> dict:
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{assistant.base_url}/api/generate",
+                f"{assistant.base_url}/api/chat",
                 json={
                     "model": use_model,
-                    "system": system_prompt,
-                    "prompt": question,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": question}
+                    ],
                     "stream": False,
-                    "keep_alive": 0,
+                    "keep_alive": "10m",
                     "options": {
                         "temperature": 0.3,
                         "num_predict": 1500
@@ -1079,11 +1177,18 @@ async def ask_question_json(question: str, model: Optional[str] = None) -> dict:
             )
 
             if response.status_code != 200:
-                _log_debug_interaction("ASK_QUESTION_ERR", system_prompt, question, f"HTTP {response.status_code}")
+                err_msg = f"HTTP {response.status_code}"
+                try:
+                    err_msg += f": {response.text[:200]}"
+                except Exception:
+                    pass
+                _log_debug_interaction("ASK_QUESTION_ERR", system_prompt, question, err_msg)
                 return {"error": f"Ollama API returned status {response.status_code}"}
 
             result = response.json()
-            response_text = result.get("response", "").strip()
+            if "error" in result:
+                return {"error": f"Ollama Error: {result['error']}"}
+            response_text = result.get("message", {}).get("content", "").strip()
             _log_debug_interaction("ASK_QUESTION", system_prompt, question, response_text)
 
             if not response_text:
@@ -1173,7 +1278,7 @@ async def chat_json(
         history_block = "\n".join(history_lines).strip() or "(no previous turns)"
         summary_block = compacted_summary or "(none)"
 
-        system_prompt = f"""You are a Mortal Kombat Mobile assistant.
+        system_prompt = f"""You are a Mortal Kombat Mobile tactical coach and roster expert.
 
     You must answer using ONLY evidence from the RAG snippets and conversation context below.
     If the evidence is insufficient, explicitly say you do not have enough indexed data.
@@ -1200,39 +1305,49 @@ async def chat_json(
     {history_block}
 
     === RESPONSE RULES ===
-    - Prefer precise facts over broad claims.
-    - For character-specific answers, quote the exact character name from evidence.
-    - If evidence includes variant lists (e.g., colon-separated forms), enumerate them in bullets.
-    - Do NOT invent passives, skills, stats, or lore not present in evidence.
-    - If no strong character evidence exists, answer with: "I don't have enough indexed data about that character yet." and suggest a close known name if available.
-    - Keep answers concise, practical, and formatted in Markdown.
+    - SYNTHESIS OVER RECITATION: Do not just copy-paste passives. Explain *how* they work together in an actual match.
+    - SYNERGY FOCUS: Always look for and highlight class-based buffs (e.g., Martial Artist, Outworld) or debuff synergies (Fire, Bleed, Snare) found in the text.
+    - READABILITY: Use **bold text** for all character and equipment names. Use bullet points for easy scanning of strategies. Reply format should be in MARKDOWN.
+    - HALLUCINATIONS: Do NOT invent stats, combo enders, or passives not provided in the context. 
+    - MISSING DATA: If the evidence does not cover the specific character, honestly say your database doesn't have their exact stats yet, but provide related strategic advice based on what IS in the context.
+    - TONE: Keep your tone encouraging, concise, and highly tactical.
     """
 
         import httpx
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{assistant.base_url}/api/generate",
+                f"{assistant.base_url}/api/chat",
                 json={
                     "model": use_model,
-                    "system": system_prompt,
-                    "prompt": message,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": message}
+                    ],
                     "stream": False,
-                    "keep_alive": 0,
+                    "keep_alive": "10m",
                     "options": {
-                        "temperature": 0.3,
+                        "temperature": 0.45,
                         "num_predict": 1800,
+                        "num_ctx": 8192,
                     },
                 },
                 timeout=_get_http_timeout_seconds(),
             )
 
         if response.status_code != 200:
-            _log_debug_interaction("CHAT_ERR", system_prompt, message, f"HTTP {response.status_code}")
+            err_msg = f"HTTP {response.status_code}"
+            try:
+                err_msg += f": {response.text[:200]}"
+            except Exception:
+                pass
+            _log_debug_interaction("CHAT_ERR", system_prompt, message, err_msg)
             return {"error": f"Ollama API returned status {response.status_code}"}
 
         result = response.json()
-        response_text = str(result.get("response", "")).strip()
+        if "error" in result:
+            return {"error": f"Ollama Error: {result['error']}"}
+        response_text = str(result.get("message", {}).get("content", "")).strip()
         _log_debug_interaction("CHAT", system_prompt, message, response_text)
         if not response_text:
             return {"error": "Empty response from LLM"}
@@ -1247,6 +1362,11 @@ async def chat_json(
 
     except Exception as e:
         logger.error(f"Error in chat_json: {e}")
+        # Capture error in debug log if possible
+        try:
+             _log_debug_interaction("CHAT_EXCEPTION", "N/A", message, f"EXCEPTION: {repr(e)}")
+        except Exception:
+             pass
         return {"error": str(e)}
 
 

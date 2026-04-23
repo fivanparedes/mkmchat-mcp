@@ -69,11 +69,11 @@
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     @if(($history->query_type ?? 'team_suggest') === 'ask_question')
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-950 text-purple-300">&#128172; Ask</span>
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-mk-tag-ask-bg text-mk-tag-ask-text">&#128172; Ask</span>
                                     @elseif(($history->query_type ?? '') === 'explain_mechanic')
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-amber-950 text-amber-300">&#9881;&#65039; Mechanic</span>
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-mk-tag-mechanic-bg text-mk-tag-mechanic-text">&#9881;&#65039; Mechanic</span>
                                     @else
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-950 text-blue-300">&#9876;&#65039; Team</span>
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-mk-tag-team-bg text-mk-tag-team-text">&#9876;&#65039; Team</span>
                                     @endif
                                 </td>
                                 <td class="px-6 py-4 text-sm text-mk-text max-w-xs">
@@ -84,11 +84,11 @@
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     @if($history->status === 'success')
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-950 text-green-300">Success</span>
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-mk-tag-success-bg text-mk-tag-success-text">Success</span>
                                     @elseif($history->status === 'error')
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-950 text-red-400" title="{{ $history->error_message }}">Error</span>
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-mk-tag-error-bg text-mk-tag-error-text" title="{{ $history->error_message }}">Error</span>
                                     @else
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-950 text-yellow-300">Pending</span>
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-mk-tag-pending-bg text-mk-tag-pending-text">Pending</span>
                                     @endif
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm">

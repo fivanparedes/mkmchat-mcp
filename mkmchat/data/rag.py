@@ -1,6 +1,7 @@
 """RAG (Retrieval-Augmented Generation) system for intelligent data search"""
 
 import logging
+import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import pickle
@@ -76,6 +77,63 @@ class RAGSystem:
         self.embeddings: Optional[np.ndarray] = None
         self._last_data_hash: Optional[str] = None  # tracks hash after last index
         
+    def _normalize_text(self, text: str) -> str:
+        """Normalize text for better embedding consistency."""
+        if not text:
+            return ""
+        # Replace curly quotes with straight ones
+        text = text.replace('’', "'").replace('‘', "'").replace('“', '"').replace('”', '"')
+        return text.strip()
+
+    def _apply_keyword_boost(self, query: str, results: List[Tuple[Document, float]]) -> List[Tuple[Document, float]]:
+        """Apply a boost to results that contain keywords from the query."""
+        if not query or not results:
+            return results
+            
+        # Clean query: remove possessives and common punctuation
+        clean_query = query.lower().replace("'s", "").replace("s'", "").replace("’s", "")
+        for char in ".,!?;:()[]{}":
+            clean_query = clean_query.replace(char, " ")
+            
+        # Extract keywords (words > 3 chars or common MK terms)
+        words = clean_query.split()
+        keywords = [w for w in words if len(w) > 3]
+        
+        # Add important small terms if they appear
+        important_terms = ['set', 'gear', 'kard', 'tier']
+        for term in important_terms:
+            if term in words and term not in keywords:
+                keywords.append(term)
+                
+        # Character names and set types are crucial
+        set_types = ['brutality', 'friendship']
+        for stype in set_types:
+            if stype in clean_query and stype not in keywords:
+                keywords.append(stype)
+        
+        if not keywords:
+            return results
+            
+        boosted_results = []
+        for doc, score in results:
+            content_lower = doc.content.lower()
+            name_lower = doc.metadata.get('name', '').lower()
+            
+            boost = 0
+            for kw in keywords:
+                # Big boost for direct name match
+                if kw in name_lower:
+                    boost += 0.15
+                # Medium boost for content match (tags, character names in desc)
+                elif kw in content_lower:
+                    boost += 0.05
+            
+            boosted_results.append((doc, score + boost))
+            
+        # Re-sort by boosted score
+        boosted_results.sort(key=lambda x: x[1], reverse=True)
+        return boosted_results
+
     def _get_cache_hash(self) -> str:
         """Generate hash of data files for cache validation"""
         hasher = hashlib.md5()
@@ -261,53 +319,77 @@ class RAGSystem:
             self.data_dir / "equipment_towers.tsv"
         ]
         
-        equipment_count = 0
+        # Pattern to detect character sets: [CHARACTER] {{SetType}}
+        set_pattern = re.compile(r'\[(.*?)\]\s+{{(Friendship|Brutality)}}')
+        
+        # First pass: map sets to item names
+        equipment_sets = {}  # (char, type) -> [item_names]
+        all_rows = []        # list of (row, source_name, file_name)
+        
         for equipment_file in equipment_files:
             if not equipment_file.exists():
                 logger.debug(f"{equipment_file.name} not found, skipping")
                 continue
             
+            source = "Tower Equipment" if "towers" in equipment_file.name else \
+                     "Krypt Equipment" if "krypt" in equipment_file.name else "Basic Equipment"
+            
             with open(equipment_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f, delimiter='\t')
                 for row in reader:
-                    content_parts = [
-                        f"Equipment: {row['name']}",
-                        f"Type: {row['type']}",
-                        f"Rarity: {row.get('rarity', 'Unknown')}",
-                        f"Effect: {row['effect']}"
-                    ]
+                    all_rows.append((row, source, equipment_file.name))
                     
-                    if row.get('max_fusion_effect'):
-                        content_parts.append(f"Max Fusion Effect: {row['max_fusion_effect']}")
-                    
-                    # Add source information
-                    if "towers" in equipment_file.name:
-                        source = "Tower Equipment"
-                    elif "krypt" in equipment_file.name:
-                        source = "Krypt Equipment"
-                    else:
-                        source = "Basic Equipment"
-                    content_parts.append(f"Source: {source}")
-                    
-                    content = "\n".join(content_parts)
-                    
-                    doc = Document(
-                        content=content,
-                        metadata={
-                            'name': row['name'],
-                            'type': row['type'],
-                            'rarity': row.get('rarity'),
-                            'tier': row.get('tier', ''),
-                            'source': source,
-                            'file': equipment_file.name
-                        },
-                        doc_type='equipment'
-                    )
-                    self.documents.append(doc)
-                    equipment_count += 1
+                    # Check for set tags
+                    effect_text = row.get('effect', '')
+                    match = set_pattern.search(effect_text)
+                    if match:
+                        char, stype = match.group(1), match.group(2)
+                        equipment_sets.setdefault((char, stype), []).append(row['name'])
+        
+        # Second pass: index items with cross-references
+        equipment_count = 0
+        for row, source, file_name in all_rows:
+            name = self._normalize_text(row['name'])
+            effect = self._normalize_text(row['effect'])
+            
+            content_parts = [
+                f"Equipment: {name}",
+                f"Type: {row['type']}",
+                f"Rarity: {row.get('rarity', 'Unknown')}",
+                f"Effect: {effect}"
+            ]
+            
+            if row.get('max_fusion_effect'):
+                content_parts.append(f"Max Fusion Effect: {self._normalize_text(row['max_fusion_effect'])}")
+            
+            # Add set information if applicable
+            match = set_pattern.search(effect)
+            if match:
+                char, stype = match.group(1), match.group(2)
+                others = [self._normalize_text(n) for n in equipment_sets.get((char, stype), []) if n != row['name']]
+                if others:
+                    content_parts.append(f"Related Set Items: {', '.join(others)}")
+            
+            content_parts.append(f"Source: {source}")
+            content = "\n".join(content_parts)
+            
+            doc = Document(
+                content=content,
+                metadata={
+                    'name': row['name'],
+                    'type': row['type'],
+                    'rarity': row.get('rarity'),
+                    'tier': row.get('tier', ''),
+                    'source': source,
+                    'file': file_name
+                },
+                doc_type='equipment'
+            )
+            self.documents.append(doc)
+            equipment_count += 1
         
         if equipment_count > 0:
-            logger.info(f"Indexed {equipment_count} equipment items")
+            logger.info(f"Indexed {equipment_count} equipment items with set cross-references")
         else:
             logger.warning("No equipment files found, skipping equipment indexing")
     
@@ -487,7 +569,11 @@ class RAGSystem:
         
         # Sort by adjusted score (highest first) and limit to top_k
         adjusted_results.sort(key=lambda x: x[1], reverse=True)
-        return adjusted_results[:top_k]
+        
+        # Apply keyword boost for direct relevance
+        final_results = self._apply_keyword_boost(query, adjusted_results)
+        
+        return final_results[:top_k]
     
     def search_equipment(
         self,
@@ -525,7 +611,11 @@ class RAGSystem:
         
         # Sort by adjusted score (highest first) and limit to top_k
         adjusted_results.sort(key=lambda x: x[1], reverse=True)
-        return adjusted_results[:top_k]
+        
+        # Apply keyword boost for direct relevance
+        final_results = self._apply_keyword_boost(query, adjusted_results)
+        
+        return final_results[:top_k]
     
     def search_gameplay(self, query: str, top_k: int = 3) -> List[Tuple[Document, float]]:
         """Search for gameplay mechanics matching the query"""

@@ -1,4 +1,4 @@
-﻿<div class="space-y-6">
+<div class="space-y-6">
     {{-- Daily usage meter --}}
     @if($this->dailyLimit > 0)
         <div class="mk-card p-4 sm:p-6">
@@ -7,12 +7,12 @@
                 <span class="text-sm text-mk-muted">{{ $this->todayCount }} / {{ $this->dailyLimit }}</span>
             </div>
             <div class="w-full bg-mk-border rounded-full h-2">
-                <div class="h-2 rounded-full {{ $this->limitReached ? 'bg-red-600' : 'bg-mk-fire' }}"
+                <div class="h-2 rounded-full {{ $this->limitReached ? 'bg-mk-danger' : 'bg-mk-fire' }}"
                      style="width: {{ min(100, $this->dailyLimit > 0 ? ($this->todayCount / $this->dailyLimit) * 100 : 0) }}%">
                 </div>
             </div>
             @if($this->limitReached)
-                <p class="mt-2 text-sm text-red-400">You have reached your daily query limit.</p>
+                <p class="mt-2 text-sm text-mk-danger">You have reached your daily query limit.</p>
             @endif
         </div>
     @endif
@@ -51,8 +51,8 @@
             </div>
 
             @if($errorMessage)
-                <div class="rounded-md bg-red-950 border border-red-800 p-4">
-                    <p class="text-sm text-red-400">{{ $errorMessage }}</p>
+                <div class="rounded-md bg-mk-tag-error-bg border border-mk-tag-error-text p-4">
+                    <p class="text-sm text-mk-tag-error-text">{{ $errorMessage }}</p>
                 </div>
             @endif
 

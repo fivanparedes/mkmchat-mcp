@@ -6,11 +6,11 @@
                 <span class="text-sm text-mk-muted">{{ $this->todayCount }} / {{ $this->dailyLimit }}</span>
             </div>
             <div class="w-full bg-mk-border rounded-full h-2">
-                <div class="h-2 rounded-full {{ $this->limitReached ? 'bg-red-600' : 'bg-mk-fire' }}"
+                <div class="h-2 rounded-full {{ $this->limitReached ? 'bg-mk-danger' : 'bg-mk-fire' }}"
                      style="width: {{ min(100, $this->dailyLimit > 0 ? ($this->todayCount / $this->dailyLimit) * 100 : 0) }}%"></div>
             </div>
             @if($this->limitReached)
-                <p class="mt-2 text-sm text-red-400">You have reached your daily query limit.</p>
+                <p class="mt-2 text-sm text-mk-danger">You have reached your daily query limit.</p>
             @endif
         </div>
     @endif
@@ -50,7 +50,7 @@
                                             wire:click="deleteConversation({{ $conversation->id }})"
                                             onclick="return confirm('Delete this chat conversation?');"
                                             type="button"
-                                            class="text-xs text-red-400 hover:text-red-300 transition"
+                                            class="text-xs text-mk-danger hover:opacity-80 transition"
                                         >
                                             Delete
                                         </button>
@@ -76,8 +76,8 @@
                     @if($activeConversationId)
                         @forelse($this->activeMessages as $msg)
                             <div class="flex {{ $msg->role === 'assistant' ? 'justify-start' : 'justify-end' }}">
-                                <article class="max-w-[90%] sm:max-w-[80%] rounded-2xl px-4 py-3 border {{ $msg->role === 'assistant' ? 'bg-mk-surface border-mk-border text-mk-text' : 'bg-mk-fire/15 border-mk-fire/60 text-orange-100' }}">
-                                    <p class="text-xs uppercase tracking-wide mb-2 {{ $msg->role === 'assistant' ? 'text-mk-muted' : 'text-orange-300' }}">{{ $msg->role === 'assistant' ? 'Assistant' : 'You' }}</p>
+                                <article class="max-w-[90%] sm:max-w-[80%] rounded-2xl px-4 py-3 border {{ $msg->role === 'assistant' ? 'bg-mk-surface border-mk-border text-mk-text' : 'bg-mk-fire/15 border-mk-fire/60 text-mk-user-text' }}">
+                                    <p class="text-xs uppercase tracking-wide mb-2 {{ $msg->role === 'assistant' ? 'text-mk-muted' : 'text-mk-user-muted' }}">{{ $msg->role === 'assistant' ? 'Assistant' : 'You' }}</p>
                                     <div class="mk-prose text-sm leading-relaxed">
                                         {!! \App\Support\SafeMarkdown::render($msg->content) !!}
                                     </div>
@@ -101,8 +101,8 @@
 
                     @if($loading)
                         <div class="flex justify-end" x-show="draftMessage && draftMessage.trim().length > 0">
-                            <article class="max-w-[90%] sm:max-w-[80%] rounded-2xl px-4 py-3 border bg-mk-fire/15 border-mk-fire/60 text-orange-100">
-                                <p class="text-xs uppercase tracking-wide mb-2 text-orange-300">You</p>
+                            <article class="max-w-[90%] sm:max-w-[80%] rounded-2xl px-4 py-3 border bg-mk-fire/15 border-mk-fire/60 text-mk-user-text">
+                                <p class="text-xs uppercase tracking-wide mb-2 text-mk-user-muted">You</p>
                                 <p class="text-sm leading-relaxed" x-text="draftMessage"></p>
                             </article>
                         </div>
@@ -124,8 +124,8 @@
 
                 <div class="p-4 sm:p-6 border-t border-mk-border bg-mk-surface/50 shrink-0">
                     @if($errorMessage)
-                        <div class="rounded-md bg-red-950 border border-red-800 p-3 mb-3">
-                            <p class="text-sm text-red-400">{{ $errorMessage }}</p>
+                        <div class="rounded-md bg-mk-tag-error-bg border border-mk-tag-error-bg p-3 mb-3">
+                            <p class="text-sm text-mk-tag-error-text">{{ $errorMessage }}</p>
                         </div>
                     @endif
 

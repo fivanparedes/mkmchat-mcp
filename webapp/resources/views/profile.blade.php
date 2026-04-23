@@ -1,4 +1,4 @@
-﻿<x-app-layout>
+<x-app-layout>
     <x-slot name="header">
         <h2 class="font-semibold text-xl text-mk-text leading-tight uppercase tracking-wide">
             &#128100; {{ __('Profile') }}
@@ -10,6 +10,12 @@
             <div class="p-4 sm:p-8 mk-card shadow">
                 <div class="max-w-xl">
                     <livewire:profile.update-profile-information-form />
+                </div>
+            </div>
+
+            <div class="p-4 sm:p-8 mk-card shadow">
+                <div class="max-w-xl">
+                    <livewire:profile.update-theme-form />
                 </div>
             </div>
 

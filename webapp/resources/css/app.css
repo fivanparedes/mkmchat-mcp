@@ -1,8 +1,74 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root, [data-theme="scorpion"] {
+    /* Scorpion (Dark theme, with gold/yellow hints to contrast dark) */
+    --mk-bg: #0c0a00;
+    --mk-surface: #141100;
+    --mk-card: #1f1b0a;
+    --mk-border: #3d3314;
+    --mk-text: #fefce8;
+    --mk-muted: #a19d80;
+    --mk-fire: #eab308;
+    --mk-fire-light: #fef08a;
+    --mk-gold: #f59e0b;
+    --mk-blood: #991b1b;
+    --mk-success: #22c55e;
+    --mk-danger: #ef4444;
+    --mk-user-text: #ffedd5; /* orange-100 */
+    --mk-user-muted: #fdba74; /* orange-300 */
+
+    
+    /* Tags & Statuses */
+    --mk-tag-ask-bg: #3b0764; /* purple-950 */
+    --mk-tag-ask-text: #d8b4fe; /* purple-300 */
+    --mk-tag-mechanic-bg: #451a03; /* amber-950 */
+    --mk-tag-mechanic-text: #fcd34d; /* amber-300 */
+    --mk-tag-team-bg: #172554; /* blue-950 */
+    --mk-tag-team-text: #93c5fd; /* blue-300 */
+    --mk-tag-success-bg: #052e16; /* green-950 */
+    --mk-tag-success-text: #86efac; /* green-300 */
+    --mk-tag-error-bg: #450a0a; /* red-950 */
+    --mk-tag-error-text: #fca5a5; /* red-300 */
+    --mk-tag-pending-bg: #422006; /* yellow-950 */
+    --mk-tag-pending-text: #fde047; /* yellow-300 */
+}
+
+[data-theme="sub-zero"] {
+    /* Sub Zero (Light theme, with blue hints) */
+    --mk-bg: #f0f8ff;
+    --mk-surface: #ffffff;
+    --mk-card: #e0f2fe;
+    --mk-border: #bae6fd;
+    --mk-text: #0f172a;
+    --mk-muted: #64748b;
+    --mk-fire: #0284c7;
+    --mk-fire-light: #38bdf8;
+    --mk-gold: #fbbf24;
+    --mk-blood: #dc2626;
+    --mk-success: #16a34a;
+    --mk-danger: #dc2626;
+    --mk-user-text: #1e40af; /* blue-800 */
+    --mk-user-muted: #1d4ed8; /* blue-700 */
+
+
+    /* Tags & Statuses */
+    --mk-tag-ask-bg: #f3e8ff; /* purple-100 */
+    --mk-tag-ask-text: #6b21a8; /* purple-800 */
+    --mk-tag-mechanic-bg: #fef3c7; /* amber-100 */
+    --mk-tag-mechanic-text: #92400e; /* amber-800 */
+    --mk-tag-team-bg: #dbeafe; /* blue-100 */
+    --mk-tag-team-text: #1e40af; /* blue-800 */
+    --mk-tag-success-bg: #dcfce7; /* green-100 */
+    --mk-tag-success-text: #166534; /* green-800 */
+    --mk-tag-error-bg: #fee2e2; /* red-100 */
+    --mk-tag-error-text: #991b1b; /* red-800 */
+    --mk-tag-pending-bg: #fef9c3; /* yellow-100 */
+    --mk-tag-pending-text: #854d0e; /* yellow-800 */
+}
 
 @layer components {
 
@@ -21,24 +87,24 @@
     }
 
     .mk-btn-danger {
-        @apply inline-flex items-center px-4 py-2 bg-red-900 border border-red-800 text-white rounded-md font-semibold text-xs uppercase tracking-widest hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-700 focus:ring-offset-2 focus:ring-offset-mk-bg disabled:opacity-50 disabled:cursor-not-allowed transition ease-in-out duration-150;
+        @apply inline-flex items-center px-4 py-2 bg-mk-blood border border-mk-blood text-white rounded-md font-semibold text-xs uppercase tracking-widest hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-mk-blood focus:ring-offset-2 focus:ring-offset-mk-bg disabled:opacity-50 disabled:cursor-not-allowed transition ease-in-out duration-150;
     }
 
     /*  Prose (Markdown content)  */
     .mk-prose {
         @apply text-mk-text leading-relaxed;
     }
-    .mk-prose h1 { @apply text-2xl font-bold text-white mt-6 mb-3; }
-    .mk-prose h2 { @apply text-xl font-semibold text-white mt-5 mb-2 border-b border-mk-border pb-1; }
+    .mk-prose h1 { @apply text-2xl font-bold text-mk-text mt-6 mb-3; }
+    .mk-prose h2 { @apply text-xl font-semibold text-mk-text mt-5 mb-2 border-b border-mk-border pb-1; }
     .mk-prose h3 { @apply text-lg font-semibold text-mk-text mt-4 mb-2; }
     .mk-prose p  { @apply mb-3; }
     .mk-prose ul { @apply list-disc list-outside pl-5 mb-3 space-y-1; }
     .mk-prose ol { @apply list-decimal list-outside pl-5 mb-3 space-y-1; }
     .mk-prose li { @apply text-mk-text; }
-    .mk-prose strong { @apply font-semibold text-white; }
+    .mk-prose strong { @apply font-semibold text-mk-text; }
     .mk-prose em { @apply italic text-mk-fire-light; }
     .mk-prose code { @apply bg-mk-surface text-mk-fire-light text-sm font-mono px-1.5 py-0.5 rounded; }
-    .mk-prose pre  { @apply bg-black text-gray-300 text-sm font-mono p-4 rounded-lg overflow-x-auto mb-3 border border-mk-border; }
+    .mk-prose pre  { @apply bg-mk-card text-mk-text text-sm font-mono p-4 rounded-lg overflow-x-auto mb-3 border border-mk-border; }
     .mk-prose pre code { @apply bg-transparent text-inherit p-0; }
     .mk-prose blockquote { @apply border-l-4 border-mk-fire pl-4 italic text-mk-muted my-3; }
     .mk-prose hr  { @apply border-mk-border my-4; }

@@ -20,12 +20,15 @@ def get_rag_system() -> RAGSystem:
         _rag_system = RAGSystem()
         if _rag_system.enabled:
             _rag_system.index_data()
+    elif _rag_system.enabled:
+        # Check if underlying files changed and re-index if needed
+        _rag_system.check_and_reindex()
     return _rag_system
 
 
 async def semantic_search(
     query: str,
-    top_k: int = 5,
+    top_k: int = 10,
     doc_type: Optional[str] = None,
     min_similarity: float = 0.3
 ) -> Dict[str, Any]:
